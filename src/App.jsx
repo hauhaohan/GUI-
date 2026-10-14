@@ -1,572 +1,815 @@
 import React, { useState } from 'react';
 import {
-  Database, MessageSquare, LayoutDashboard, BookOpen,
-  Send, Code, Table, BarChart2, Download, Pin,
-  ThumbsUp, ThumbsDown, Plus, CheckCircle2, Sparkles, Filter
+  LayoutDashboard, MessageSquare, Database, Settings, Search, Plus,
+  Pin, Clock, Sparkles, ChevronRight, ChevronDown, CheckCircle2,
+  XCircle, Download, Table, BarChart2, ArrowLeft, Filter, Bell,
+  HelpCircle, Send, Code, FileSpreadsheet, FileText, X
 } from 'lucide-react';
 
 // ==========================================
-// 1. DỮ LIỆU GIẢ LẬP (MOCK DATA) ĐỂ DEMO UI
+// MOCK DATA KHỚP DỮ LIỆU THIẾT KẾ FIGMA
 // ==========================================
-const INITIAL_THREADS = [
-  { id: 1, title: 'Doanh thu dọn dẹp Cầu Giấy' },
-  { id: 2, title: 'Top 5 thợ doanh thu cao nhất' },
-  { id: 3, title: 'Danh sách khách hàng hủy lịch' },
+const INITIAL_DICTIONARY = [
+  { id: 1, term: 'Khách VIP', rule: 'total_fee > 10.000.000', desc: 'Khách hàng có tổng chi tiêu trên 10 triệu' },
+  { id: 2, term: 'Thợ nổi bật', rule: 'completed_orders >= 30', desc: 'Thợ hoàn thành ≥ 30 đơn/tháng' },
+  { id: 3, term: 'Đơn cấp tốc', rule: "service_type = 'urgent'", desc: 'Đơn đặt dịch vụ khẩn cấp' },
+  { id: 4, term: 'Tỷ lệ hủy cao', rule: 'cancel_rate > 0.15', desc: 'Tỷ lệ hủy đơn vượt 15%' },
 ];
 
-const INITIAL_MESSAGES = [
-  {
-    id: 1,
-    sender: 'user',
-    text: 'Tháng trước có bao nhiêu khách hàng đặt dịch vụ dọn dẹp nhà cửa tại quận Cầu Giấy và tổng doanh thu là bao nhiêu?'
-  },
-  {
-    id: 2,
-    sender: 'bot',
-    text: 'Trong tháng trước, dịch vụ dọn dẹp tại Cầu Giấy có 45 lượt đặt, mang về tổng doanh thu 15.500.000 VNĐ.',
-    sql: "SELECT COUNT(b.id) AS total_bookings, SUM(p.amount) AS total_revenue \nFROM bookings b \nJOIN services s ON b.service_id = s.id \nJOIN payments p ON b.id = p.booking_id \nWHERE s.name = 'Dọn dẹp nhà cửa' AND b.district = 'Cầu Giấy' \nAND b.created_at >= '2026-08-01' AND b.created_at < '2026-09-01' \nLIMIT 100;",
-    sqlExplanation: 'Kết nối 3 bảng bookings (lịch hẹn), services (dịch vụ) và payments (thanh toán). Lọc theo tên dịch vụ là Dọn dẹp nhà cửa tại quận Cầu Giấy trong tháng 8, sau đó đếm tổng số đơn và cộng tổng số tiền.',
-    metrics: [
-      { label: 'Tổng lượt đặt (total_bookings)', value: '45 đơn' },
-      { label: 'Tổng doanh thu (total_revenue)', value: '15.500.000 đ' }
-    ],
-    data: [
-      { khu_vuc: 'P. Dịch Vọng', so_luong_don: 18, doanh_thu: 6200000 },
-      { khu_vuc: 'P. Mai Dịch', so_luong_don: 15, doanh_thu: 5300000 },
-      { khu_vuc: 'P. Trung Hòa', so_luong_don: 12, doanh_thu: 4000000 },
-    ]
-  },
-  {
-    id: 3,
-    sender: 'user',
-    text: 'Cho tôi xem danh sách các thợ thực hiện từ danh sách trên, lọc những người có doanh thu trên 10 triệu.'
-  },
-  {
-    id: 4,
-    sender: 'bot',
-    text: 'Dưới đây là danh sách các thợ thực hiện dịch vụ tại khu vực Cầu Giấy có tổng doanh thu vượt mức 10.000.000 VNĐ:',
-    contextFilter: 'Đang lọc nối tiếp (Multi-turn): doanh_thu > 10.000.000đ',
-    sql: "SELECT t.full_name AS ten_tho, t.phone AS so_dien_thoai, COUNT(b.id) AS so_don_hoan_thanh, SUM(p.amount) AS tong_doanh_thu \nFROM technicians t \nJOIN bookings b ON t.id = b.technician_id \nJOIN payments p ON b.id = p.booking_id \nWHERE b.district = 'Cầu Giấy' \nGROUP BY t.id \nHAVING SUM(p.amount) > 10000000 \nLIMIT 100;",
-    sqlExplanation: 'Kế thừa điều kiện lọc quận Cầu Giấy từ câu hỏi trước, nhóm theo từng thợ (GROUP BY) và dùng mệnh đề HAVING để lọc ra những người có tổng doanh thu trên 10.000.000đ.',
-    data: [
-      { ten_tho: 'Nguyễn Văn A', so_dien_thoai: '0987654321', so_don_hoan_thanh: 28, tong_doanh_thu: 14500000 },
-      { ten_tho: 'Trần Thị B', so_dien_thoai: '0912345678', so_don_hoan_thanh: 22, tong_doanh_thu: 11200000 },
-      { ten_tho: 'Lê Hoàng C', so_dien_thoai: '0933445566', so_don_hoan_thanh: 19, tong_doanh_thu: 10400000 }
-    ]
-  }
-];
-
-// ==========================================
-// 2. COMPONENT TRÁI TIM: BẢNG DỮ LIỆU ĐỘNG (DYNAMIC TABLE)
-// Tự động đọc keys từ JSON bất kỳ để vẽ cột và hàng
-// ==========================================
-const DynamicDataTable = ({ data }) => {
-  if (!data || data.length === 0) {
-    return <div className="text-sm text-slate-400 italic p-3">Không có dữ liệu hiển thị.</div>;
-  }
-
-  // Lấy toàn bộ "keys" của phần tử đầu tiên làm Tiêu đề cột (Headers)
-  const columns = Object.keys(data[0]);
-
-  // Hàm format số tiền/số lượng cho đẹp mắt
-  const formatCellValue = (val) => {
-    if (typeof val === 'number' && val > 1000) {
-      return val.toLocaleString('vi-VN');
-    }
-    return String(val ?? '');
-  };
-
-  return (
-    <div className="overflow-x-auto rounded-lg border border-slate-200 shadow-sm my-3">
-      <table className="w-full text-left border-collapse bg-white text-sm">
-        <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 uppercase text-xs font-semibold">
-          <tr>
-            {columns.map((col, idx) => (
-              <th key={idx} className="py-3 px-4 tracking-wider">
-                {col.replace(/_/g, ' ')}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {data.map((row, rowIndex) => (
-            <tr key={rowIndex} className="hover:bg-indigo-50/40 transition-colors">
-              {columns.map((col, colIndex) => (
-                <td key={colIndex} className="py-2.5 px-4 text-slate-700 font-medium">
-                  {formatCellValue(row[col])}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-};
-
-// ==========================================
-// 3. COMPONENT BIỂU ĐỒ 1 CHẠM (ONE-CLICK CHART)
-// Tự động tìm cột chữ làm nhãn và cột số lớn nhất để vẽ biểu đồ
-// ==========================================
-const DynamicSimpleChart = ({ data }) => {
-  if (!data || data.length === 0) return null;
-
-  const keys = Object.keys(data[0]);
-  const labelKey = keys[0]; // Lấy cột đầu tiên làm tên trục
-  // Tìm cột cuối cùng có kiểu dữ liệu là số (number) để vẽ thanh giá trị
-  const valueKey = [...keys].reverse().find(k => typeof data[0][k] === 'number') || keys[1];
-
-  const maxValue = Math.max(...data.map(item => Number(item[valueKey]) || 0), 1);
-
-  return (
-    <div className="p-4 bg-slate-50 rounded-lg border border-slate-200 my-3 space-y-3">
-      <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex justify-between">
-        <span>Phân tích theo: {labelKey.replace(/_/g, ' ')}</span>
-        <span>Giá trị: {valueKey.replace(/_/g, ' ')}</span>
-      </div>
-      <div className="space-y-2.5">
-        {data.map((row, idx) => {
-          const val = Number(row[valueKey]) || 0;
-          const percent = Math.max(Math.round((val / maxValue) * 100), 5);
-          return (
-            <div key={idx} className="space-y-1">
-              <div className="flex justify-between text-xs font-medium text-slate-700">
-                <span>{row[labelKey]}</span>
-                <span className="text-indigo-600 font-bold">{val.toLocaleString('vi-VN')}</span>
-              </div>
-              <div className="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden">
-                <div
-                  className="bg-indigo-600 h-full rounded-full transition-all duration-500"
-                  style={{ width: `${percent}%` }}
-                />
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-};
-
-// ==========================================
-// 4. COMPONENT BONG BÓNG CHAT CỦA AI
-// Tích hợp Xem SQL, Đổi Bảng/Biểu đồ, Export CSV, Pin Dashboard, Feedback
-// ==========================================
-const BotMessageCard = ({ msg, onPinWidget }) => {
-  const [viewMode, setViewMode] = useState('table'); // 'table' | 'chart'
-  const [showSql, setShowSql] = useState(false);
-  const [feedback, setFeedback] = useState(null); // 'up' | 'down'
-
-  // Hàm xuất dữ liệu JSON ra file CSV thật
-  const handleExportCSV = () => {
-    if (!msg.data || msg.data.length === 0) return;
-    const headers = Object.keys(msg.data[0]).join(',');
-    const rows = msg.data.map(row => Object.values(row).join(',')).join('\n');
-    const csvContent = `data:text/csv;charset=utf-8,\uFEFF${headers}\n${rows}`;
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `export_query_${msg.id}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  return (
-    <div className="flex items-start gap-3 max-w-4xl">
-      <div className="w-9 h-9 rounded-lg bg-indigo-600 flex items-center justify-center text-white shrink-0 shadow-sm">
-        <Sparkles size={18} />
-      </div>
-
-      <div className="flex-1 bg-white border border-slate-200 rounded-2xl rounded-tl-none p-5 shadow-sm">
-        {/* Thẻ báo hiệu Multi-turn Context (Nếu có) */}
-        {msg.contextFilter && (
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 mb-3 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">
-            <Filter size={12} />
-            {msg.contextFilter}
-          </div>
-        )}
-
-        {/* Câu trả lời ngôn ngữ tự nhiên của AI */}
-        <p className="text-slate-800 text-sm leading-relaxed mb-3">{msg.text}</p>
-
-        {/* Các thẻ tổng số liệu (Metric Cards) */}
-        {msg.metrics && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 my-3">
-            {msg.metrics.map((m, idx) => (
-              <div key={idx} className="bg-indigo-50/50 border border-indigo-100 p-3.5 rounded-xl">
-                <div className="text-xs text-slate-500 font-medium">{m.label}</div>
-                <div className="text-lg font-bold text-indigo-700 mt-0.5">{m.value}</div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Thanh công cụ điều khiển (Xem Bảng, Biểu đồ, Xem SQL, Export, Ghim) */}
-        {msg.data && (
-          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={() => setViewMode('table')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-                  viewMode === 'table'
-                    ? 'bg-indigo-600 text-white'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                <Table size={14} /> Bảng dữ liệu
-              </button>
-              <button
-                onClick={() => setViewMode('chart')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-                  viewMode === 'chart'
-                    ? 'bg-indigo-600 text-white'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                <BarChart2 size={14} /> Vẽ biểu đồ
-              </button>
-              <button
-                onClick={() => setShowSql(!showSql)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-                  showSql
-                    ? 'bg-slate-800 text-white'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                <Code size={14} /> {showSql ? 'Ẩn SQL' : 'Xem SQL'}
-              </button>
-            </div>
-
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={handleExportCSV}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition"
-                title="Xuất file CSV"
-              >
-                <Download size={14} /> Xuất CSV
-              </button>
-              <button
-                onClick={() => onPinWidget(msg)}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 transition"
-                title="Ghim vào Dashboard"
-              >
-                <Pin size={14} /> Ghim
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Khu vực hiển thị SQL & Lời giải thích ("Explain my SQL") */}
-        {showSql && msg.sql && (
-          <div className="my-3 rounded-xl overflow-hidden border border-slate-700 bg-slate-900 text-slate-100 text-xs">
-            <div className="bg-slate-800 px-4 py-2 flex items-center justify-between border-b border-slate-700">
-              <span className="font-mono text-emerald-400 font-semibold">PostgreSQL (Read-Only Guardrail)</span>
-              <span className="text-[11px] text-slate-400">Auto-appended LIMIT 100</span>
-            </div>
-            <pre className="p-4 font-mono overflow-x-auto leading-relaxed text-indigo-200">
-              {msg.sql}
-            </pre>
-            {msg.sqlExplanation && (
-              <div className="bg-slate-800/80 px-4 py-2.5 border-t border-slate-700 text-slate-300">
-                <strong className="text-amber-400">💡 Giải thích câu lệnh: </strong>
-                {msg.sqlExplanation}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Khu vực hiển thị Bảng động hoặc Biểu đồ */}
-        {viewMode === 'table' ? (
-          <DynamicDataTable data={msg.data} />
-        ) : (
-          <DynamicSimpleChart data={msg.data} />
-        )}
-
-        {/* Đánh giá & Huấn luyện AI (Feedback Loop) */}
-        <div className="flex items-center justify-between pt-2 mt-2 border-t border-slate-100 text-xs text-slate-400">
-          <span>Kết quả trích xuất thông qua JdbcTemplate</span>
-          <div className="flex items-center gap-2">
-            <span>Đánh giá SQL:</span>
-            <button
-              onClick={() => setFeedback('up')}
-              className={`p-1 rounded hover:bg-slate-100 ${feedback === 'up' ? 'text-emerald-600 font-bold' : ''}`}
-            >
-              <ThumbsUp size={14} />
-            </button>
-            <button
-              onClick={() => setFeedback('down')}
-              className={`p-1 rounded hover:bg-slate-100 ${feedback === 'down' ? 'text-rose-600 font-bold' : ''}`}
-            >
-              <ThumbsDown size={14} />
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// ==========================================
-// 5. COMPONENT CHÍNH (MAIN APPLICATION LAYOUT)
-// ==========================================
 export default function App() {
-  const [activeNav, setActiveNav] = useState('chat'); // 'chat' | 'dashboard' | 'dictionary'
-  const [messages, setMessages] = useState(INITIAL_MESSAGES);
-  const [inputQuestion, setInputQuestion] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [pinnedWidgets, setPinnedWidgets] = useState([]);
-  const [dictionaries, setDictionaries] = useState([
-    { id: 1, term: 'Khách VIP', rule: 'Khách hàng có tổng chi tiêu (SUM(payments.amount)) > 10.000.000 VNĐ' },
-    { id: 2, term: 'Đơn thành công', rule: "Trạng thái đơn hàng bookings.status = 'COMPLETED'" }
-  ]);
+  // Navigation & Screen States
+  const [activeNav, setActiveNav] = useState('studio'); // 'dashboard' | 'studio' | 'sources' | 'settings'
+  const [studioView, setStudioView] = useState('list'); // 'list' | 'detail'
+  const [settingsTab, setSettingsTab] = useState('dictionary'); // 'dictionary' | 'sources' | 'connect'
+  const [dataViewMode, setDataViewMode] = useState('table'); // 'table' | 'chart'
+  const [showSqlCode, setShowSqlCode] = useState(false);
+  const [chatInput, setChatInput] = useState('');
 
-  // HÀM GỬI CÂU HỎI XUỐNG SPRING BOOT BACKEND
-  const handleSendQuestion = async (e) => {
-    e.preventDefault();
-    if (!inputQuestion.trim()) return;
-
-    const userMsg = { id: Date.now(), sender: 'user', text: inputQuestion };
-    setMessages(prev => [...prev, userMsg]);
-    const currentQuestion = inputQuestion;
-    setInputQuestion('');
-    setIsLoading(true);
-
-    try {
-      // -------------------------------------------------------------
-      // KẾT NỐI VỚI SPRING BOOT API THẬT CỦA BẠN TẠI ĐÂY:
-      // -------------------------------------------------------------
-      /*
-      const response = await fetch('http://localhost:8080/api/v1/query/ask', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: currentQuestion })
-      });
-      const result = await response.json();
-      */
-
-      // GIẢ LẬP ĐỘ TRỄ MẠNG 1.2 GIÂY KHI CHƯA BẬT SPRING BOOT:
-      await new Promise(resolve => setTimeout(resolve, 1200));
-
-      const mockBotReply = {
-        id: Date.now() + 1,
-        sender: 'bot',
-        text: `Đã phân tích câu hỏi: "${currentQuestion}". Dưới đây là dữ liệu truy xuất trực tiếp từ cơ sở dữ liệu Home Service Booking:`,
-        sql: "SELECT s.name AS ten_dich_vu, COUNT(b.id) AS tong_so_don, SUM(p.amount) AS doanh_thu \nFROM services s \nJOIN bookings b ON s.id = b.service_id \nJOIN payments p ON b.id = p.booking_id \nGROUP BY s.name \nORDER BY doanh_thu DESC \nLIMIT 100;",
-        sqlExplanation: 'Truy vấn thống kê số lượng đơn và tổng doanh thu theo từng loại dịch vụ, sắp xếp giảm dần.',
-        data: [
-          { ten_dich_vu: 'Dọn dẹp nhà cửa', tong_so_don: 120, doanh_thu: 42000000 },
-          { ten_dich_vu: 'Vệ sinh máy lạnh', tong_so_don: 85, doanh_thu: 25500000 },
-          { ten_dich_vu: 'Sửa chữa điện nước', tong_so_don: 64, doanh_thu: 19200000 },
-          { ten_dich_vu: 'Giặt sofa / rèm cửa', tong_so_don: 40, doanh_thu: 16000000 },
-        ]
-      };
-
-      setMessages(prev => [...prev, mockBotReply]);
-    } catch (error) {
-      console.error('Lỗi khi gọi API:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handlePinWidget = (msg) => {
-    if (!pinnedWidgets.find(w => w.id === msg.id)) {
-      setPinnedWidgets([...pinnedWidgets, msg]);
-      alert('Đã ghim biểu đồ vào Bảng điều khiển (Dashboard)!');
-    }
+  // ----------------------------------------------------
+  // SIDEBAR NAV ITEM COMPONENT
+  // ----------------------------------------------------
+  const renderNavItem = (id, icon, label, badge) => {
+    const isActive = activeNav === id;
+    return (
+      <button
+        onClick={() => {
+          setActiveNav(id);
+          if (id === 'studio') setStudioView('list');
+        }}
+        className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all ${
+          isActive
+            ? 'bg-[#5B42F3] text-white shadow-lg shadow-indigo-900/30 font-semibold'
+            : 'text-slate-400 hover:bg-[#161B2E] hover:text-slate-200'
+        }`}
+      >
+        <div className="flex items-center gap-3">
+          {icon}
+          <span>{label}</span>
+        </div>
+        {badge && (
+          <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${
+            isActive ? 'bg-white/20 text-white' : 'bg-[#1E253B] text-indigo-400'
+          }`}>
+            {badge}
+          </span>
+        )}
+      </button>
+    );
   };
 
   return (
-    <div className="flex h-screen bg-slate-100 font-sans text-slate-800 overflow-hidden">
-      {/* ================= SIDEBAR BÊN TRÁI ================= */}
-      <aside className="w-72 bg-slate-900 text-slate-200 flex flex-col justify-between shrink-0">
-        <div className="p-4 space-y-6">
-          {/* Logo & Tên hệ thống */}
-          <div className="flex items-center gap-3 px-2 py-1">
-            <div className="w-9 h-9 rounded-xl bg-indigo-500 flex items-center justify-center font-bold text-white shadow-md">
+    <div className="flex h-screen bg-[#F8FAFC] font-sans text-slate-800 overflow-hidden">
+      
+      {/* ========================================================= */}
+      {/* 1. SIDEBAR (FIGMA DARK NAVBAR: #0D111D)                   */}
+      {/* ========================================================= */}
+      <aside className="w-64 bg-[#0D111D] text-slate-300 flex flex-col justify-between shrink-0 border-r border-[#1E253B]">
+        <div className="p-4 space-y-5">
+          
+          {/* Logo & Console Title */}
+          <div className="flex items-center gap-3 px-1 pt-1">
+            <div className="w-9 h-9 rounded-xl bg-[#5B42F3] flex items-center justify-center text-white shadow-md">
               <Database size={20} />
             </div>
             <div>
-              <h1 className="font-bold text-white text-sm tracking-wide">AI Data Assistant</h1>
-              <span className="text-[11px] text-emerald-400 flex items-center gap-1">
-                <CheckCircle2 size={11} /> Read-Only Mode Active
-              </span>
+              <h1 className="font-bold text-white text-base leading-tight tracking-wide">DataAI</h1>
+              <p className="text-[11px] text-slate-400 font-medium">Admin Console</p>
             </div>
           </div>
 
-          {/* Menu điều hướng các Module SaaS */}
-          <nav className="space-y-1">
-            <button
-              onClick={() => setActiveNav('chat')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition ${
-                activeNav === 'chat' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-              }`}
-            >
-              <MessageSquare size={17} /> Trợ lý Truy vấn (Chat)
-            </button>
-            <button
-              onClick={() => setActiveNav('dashboard')}
-              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium transition ${
-                activeNav === 'dashboard' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-              }`}
-            >
-              <span className="flex items-center gap-3"><LayoutDashboard size={17} /> Bảng điều khiển</span>
-              <span className="bg-slate-800 text-slate-200 text-xs px-2 py-0.5 rounded-full">{pinnedWidgets.length}</span>
-            </button>
-            <button
-              onClick={() => setActiveNav('dictionary')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition ${
-                activeNav === 'dictionary' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-              }`}
-            >
-              <BookOpen size={17} /> Từ điển Dữ liệu (Rules)
-            </button>
-          </nav>
+          {/* Connected DB Selector Pill */}
+          <div className="bg-[#151929] border border-[#23293F] p-3 rounded-xl">
+            <div className="text-[11px] text-slate-400 flex items-center gap-1.5 font-medium">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              Cơ sở dữ liệu
+            </div>
+            <div className="text-xs font-bold text-emerald-400 font-mono mt-0.5 truncate">
+              homeservice_prod
+            </div>
+          </div>
 
-          {/* Danh sách phiên chat (Threads) */}
-          <div className="pt-4 border-t border-slate-800">
-            <div className="flex items-center justify-between px-2 mb-2 text-xs font-semibold text-slate-400 uppercase">
-              <span>Lịch sử truy vấn</span>
-              <button className="text-indigo-400 hover:text-indigo-300 flex items-center gap-0.5">
-                <Plus size={14} /> Mới
-              </button>
+          {/* Navigation Section */}
+          <div className="space-y-1">
+            <div className="px-2 mb-2 text-[10px] font-bold text-slate-500 tracking-wider uppercase">
+              ĐIỀU HƯỚNG
             </div>
-            <div className="space-y-1">
-              {INITIAL_THREADS.map(t => (
-                <button
-                  key={t.id}
-                  onClick={() => setActiveNav('chat')}
-                  className="w-full text-left px-3 py-2 rounded-lg text-xs text-slate-300 hover:bg-slate-800 truncate transition"
-                >
-                  • {t.title}
-                </button>
-              ))}
-            </div>
+            {renderNavItem('dashboard', <LayoutDashboard size={18} />, 'Dashboard', '3')}
+            {renderNavItem('studio', <MessageSquare size={18} />, 'Query Studio')}
+            {renderNavItem('sources', <Database size={18} />, 'Data Sources')}
+            {renderNavItem('settings', <Settings size={18} />, 'Dictionary & Settings')}
           </div>
         </div>
 
-        {/* Trạng thái Kết nối Database (Data Source) */}
-        <div className="p-4 border-t border-slate-800 bg-slate-950/60">
-          <div className="text-xs text-slate-400 mb-1">Cơ sở dữ liệu đang kết nối:</div>
-          <div className="flex items-center justify-between bg-slate-900 p-2.5 rounded-lg border border-slate-800">
-            <div className="truncate">
-              <div className="text-xs font-semibold text-white">Home_Service_Booking</div>
-              <div className="text-[11px] text-slate-400">PostgreSQL • 6 Bảng</div>
+        {/* User Profile Footer */}
+        <div className="p-4 border-t border-[#1E253B] flex items-center justify-between">
+          <div className="flex items-center gap-3 truncate">
+            <div className="w-8 h-8 rounded-full bg-[#5B42F3] flex items-center justify-center text-white font-bold text-xs">
+              AD
             </div>
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+            <div className="truncate">
+              <div className="text-xs font-bold text-white truncate">Admin User</div>
+              <div className="text-[10px] text-slate-400 truncate">admin@homeser...</div>
+            </div>
           </div>
+          <ChevronDown size={14} className="text-slate-500" />
         </div>
       </aside>
 
-      {/* ================= KHU VỰC NỘI DUNG CHÍNH ================= */}
-      <main className="flex-1 flex flex-col h-full overflow-hidden">
-        {/* Header */}
-        <header className="h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between shrink-0">
-          <div>
-            <h2 className="font-bold text-slate-800">
-              {activeNav === 'chat' && 'Trợ lý Truy vấn Ngôn ngữ Tự nhiên (Text-to-SQL)'}
-              {activeNav === 'dashboard' && 'Bảng điều khiển Thống kê (Pinned Widgets)'}
-              {activeNav === 'dictionary' && 'Từ điển Dữ liệu Nghiệp vụ (Data Dictionary)'}
-            </h2>
-            <p className="text-xs text-slate-500">
-              Hỏi bất kỳ số liệu nào bằng tiếng Việt — Hệ thống tự động sinh SQL và vẽ bảng động.
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="text-xs bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg font-medium border border-slate-200">
-              Model: <strong>GPT-4o / Claude 3.5</strong>
+      {/* ========================================================= */}
+      {/* 2. MAIN CONTENT AREA                                      */}
+      {/* ========================================================= */}
+      <main className="flex-1 flex flex-col h-full overflow-hidden bg-[#F8FAFC]">
+        
+        {/* Top Header & Breadcrumb */}
+        <header className="h-14 bg-white border-b border-slate-200 px-6 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
+            <span>Home Service Booking</span>
+            <ChevronRight size={14} />
+            <span className="text-slate-800 font-semibold">
+              {activeNav === 'studio' && (studioView === 'detail' ? 'Query Studio > Top thợ doanh thu tháng 08/2026' : 'Query Studio')}
+              {activeNav === 'dashboard' && 'Dashboard'}
+              {activeNav === 'sources' && 'Data Sources'}
+              {activeNav === 'settings' && 'Dictionary & Settings'}
             </span>
+          </div>
+          <div className="flex items-center gap-4 text-slate-400">
+            <button className="hover:text-slate-600"><Bell size={18} /></button>
+            <button className="hover:text-slate-600"><HelpCircle size={18} /></button>
           </div>
         </header>
 
-        {/* MÀN HÌNH 1: CHAT INTERFACE */}
-        {activeNav === 'chat' && (
-          <>
-            <div className="flex-1 overflow-y-auto p-6 space-y-6">
-              {messages.map(msg =>
-                msg.sender === 'user' ? (
-                  <div key={msg.id} className="flex justify-end">
-                    <div className="bg-indigo-600 text-white px-4 py-3 rounded-2xl rounded-tr-none max-w-xl text-sm shadow-sm">
-                      {msg.text}
+        {/* ========================================================= */}
+        {/* SCREEN A: QUERY STUDIO (MÀN HÌNH CHÍNH & MÀN HÌNH CHI TIẾT) */}
+        {/* ========================================================= */}
+        {activeNav === 'studio' && (
+          studioView === 'list' ? (
+            /* --- QUERY STUDIO LIST VIEW (ẢNH 1) --- */
+            <div className="flex-1 overflow-y-auto p-8 max-w-6xl mx-auto w-full space-y-6">
+              
+              {/* Header Title + Button New Session */}
+              <div className="flex items-start justify-between">
+                <div>
+                  <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Query Studio</h2>
+                  <p className="text-sm text-slate-500 mt-1">
+                    Chọn một phiên hội thoại để tiếp tục, hoặc tạo mới để bắt đầu truy vấn.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setStudioView('detail')}
+                  className="px-5 py-2.5 bg-[#5B42F3] hover:bg-indigo-700 text-white rounded-xl font-semibold text-sm flex items-center gap-2 shadow-md shadow-indigo-200 transition"
+                >
+                  <Plus size={18} /> Phiên mới
+                </button>
+              </div>
+
+              {/* Search Box & Category Filters */}
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="relative flex-1 min-w-[280px]">
+                  <Search size={18} className="absolute left-3.5 top-3 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Tìm kiếm phiên hội thoại..."
+                    className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm"
+                  />
+                </div>
+                <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
+                  <button className="px-3.5 py-1.5 bg-[#5B42F3] text-white rounded-lg text-xs font-semibold">Tất cả</button>
+                  <button className="px-3.5 py-1.5 text-slate-600 hover:bg-slate-100 rounded-lg text-xs font-medium">Doanh thu</button>
+                  <button className="px-3.5 py-1.5 text-slate-600 hover:bg-slate-100 rounded-lg text-xs font-medium">Đơn hàng</button>
+                  <button className="px-3.5 py-1.5 text-slate-600 hover:bg-slate-100 rounded-lg text-xs font-medium">Nhân sự</button>
+                </div>
+              </div>
+
+              {/* Top 3 Stat Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-xl bg-violet-50 text-[#5B42F3] flex items-center justify-center font-bold">
+                    <MessageSquare size={22} />
+                  </div>
+                  <div>
+                    <div className="text-2xl font-bold text-slate-900">6</div>
+                    <div className="text-xs text-slate-500 font-medium mt-0.5">Tổng phiên</div>
+                  </div>
+                </div>
+                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-xl bg-rose-50 text-rose-500 flex items-center justify-center font-bold">
+                    <Pin size={22} />
+                  </div>
+                  <div>
+                    <div className="text-2xl font-bold text-slate-900">1</div>
+                    <div className="text-xs text-slate-500 font-medium mt-0.5">Đã ghim</div>
+                  </div>
+                </div>
+                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center font-bold">
+                    <FileText size={22} />
+                  </div>
+                  <div>
+                    <div className="text-2xl font-bold text-slate-900">34</div>
+                    <div className="text-xs text-slate-500 font-medium mt-0.5">Tin nhắn</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Section 1: ĐÃ GHIM */}
+              <div className="space-y-3">
+                <div className="text-xs font-bold text-slate-600 tracking-wider flex items-center gap-1.5">
+                  <Pin size={14} className="text-[#5B42F3]" /> ĐÃ GHIM
+                </div>
+                <div
+                  onClick={() => setStudioView('detail')}
+                  className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:border-indigo-300 cursor-pointer transition flex items-start justify-between"
+                >
+                  <div className="flex gap-4">
+                    <div className="w-10 h-10 rounded-xl bg-indigo-50 text-[#5B42F3] flex items-center justify-center shrink-0">
+                      <MessageSquare size={20} />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                        <Pin size={14} className="text-[#5B42F3] fill-[#5B42F3]" />
+                        Top thợ doanh thu tháng 08/2026
+                      </h3>
+                      <p className="text-xs text-slate-500 mt-1">Lọc thêm những người có doanh thu trên 10 triệu từ danh sách trên.</p>
+                      <div className="flex items-center gap-3 mt-3">
+                        <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-50 text-[#5B42F3]">Doanh thu</span>
+                        <span className="text-xs text-slate-400 flex items-center gap-1"><MessageSquare size={12} /> 6 tin nhắn</span>
+                        <span className="text-xs text-slate-400 flex items-center gap-1"><Database size={12} /> homeservice_prod</span>
+                      </div>
+                    </div>
+                  </div>
+                  <span className="text-xs text-slate-400 font-medium">08:47</span>
+                </div>
+              </div>
+
+              {/* Section 2: GẦN ĐÂY */}
+              <div className="space-y-3">
+                <div className="text-xs font-bold text-slate-600 tracking-wider flex items-center gap-1.5">
+                  <Clock size={14} className="text-slate-400" /> GẦN ĐÂY
+                </div>
+                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:border-indigo-300 cursor-pointer transition flex items-start justify-between">
+                  <div className="flex gap-4">
+                    <div className="w-10 h-10 rounded-xl bg-indigo-50 text-[#5B42F3] flex items-center justify-center shrink-0">
+                      <MessageSquare size={20} />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-slate-900 text-sm">Phân tích đơn hủy tháng 7</h3>
+                      <p className="text-xs text-slate-500 mt-1">Tỷ lệ hủy cao nhất ở dịch vụ nào? Nguyên nhân chính là gì?</p>
+                    </div>
+                  </div>
+                  <span className="text-xs text-slate-400 font-medium">Hôm qua</span>
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* --- QUERY STUDIO ACTIVE SESSION CHAT & TABLE VIEW (ẢNH 7) --- */
+            <div className="flex-1 flex overflow-hidden">
+              
+              {/* LEFT PANEL: CHAT CONVERSATION */}
+              <div className="w-[380px] bg-white border-r border-slate-200 flex flex-col justify-between shrink-0">
+                
+                {/* Header Chat */}
+                <div className="p-4 border-b border-slate-200 space-y-2">
+                  <button
+                    onClick={() => setStudioView('list')}
+                    className="text-xs text-slate-500 hover:text-indigo-600 flex items-center gap-1 font-semibold"
+                  >
+                    <ArrowLeft size={14} /> Danh sách phiên
+                  </button>
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-bold text-slate-900 text-sm truncate">Top thợ doanh thu tháng 08/2026</h3>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700 flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> live
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-400">Multi-turn · homeservice_prod</div>
+                </div>
+
+                {/* Messages Container */}
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  <div className="text-center text-[10px] text-slate-400 font-mono">08:47</div>
+                  <div className="flex gap-3 items-start">
+                    <div className="w-7 h-7 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center font-bold text-xs shrink-0">
+                      AI
+                    </div>
+                    <div className="bg-slate-50 border border-slate-200 p-3.5 rounded-2xl rounded-tl-none text-xs text-slate-700 space-y-2">
+                      <p>Đã cập nhật danh sách với điều kiện doanh thu &gt; 10.000.000đ — còn lại 3 thợ thỏa điều kiện.</p>
+                      <button
+                        onClick={() => setShowSqlCode(!showSqlCode)}
+                        className="text-[#5B42F3] font-semibold text-xs flex items-center gap-1 hover:underline"
+                      >
+                        &gt; {showSqlCode ? 'Ẩn SQL' : 'Xem SQL'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {showSqlCode && (
+                    <div className="p-3 bg-slate-900 text-indigo-200 font-mono text-[11px] rounded-xl overflow-x-auto border border-slate-800">
+                      SELECT t.full_name, SUM(p.amount) <br/>
+                      FROM technicians t <br/>
+                      JOIN bookings b ON t.id = b.tech_id <br/>
+                      WHERE b.created_at &gt;= '2026-08-01' <br/>
+                      HAVING SUM(p.amount) &gt; 10000000;
+                    </div>
+                  )}
+
+                  {/* Suggested Follow-up Questions */}
+                  <div className="pt-2">
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">GỢI Ý TIẾP THEO</div>
+                    <div className="space-y-1.5">
+                      <button className="w-full text-left p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 transition">
+                        So sánh với tháng 7?
+                      </button>
+                      <button className="w-full text-left p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 transition">
+                        Phân loại theo dịch vụ?
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Input Chat Box */}
+                <div className="p-3 border-t border-slate-200 bg-white">
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      placeholder="Hỏi về dữ liệu..."
+                      className="w-full pl-3 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <button className="absolute right-2 top-2 p-1.5 bg-[#5B42F3] text-white rounded-lg hover:bg-indigo-700">
+                      <Send size={12} />
+                    </button>
+                  </div>
+                  <div className="text-[10px] text-slate-400 text-center mt-1.5">Enter gửi · Shift+Enter xuống dòng</div>
+                </div>
+              </div>
+
+              {/* RIGHT PANEL: DATA GRID & ACTION BAR */}
+              <div className="flex-1 overflow-y-auto p-6 space-y-5 bg-[#F8FAFC]">
+                
+                {/* Top Action Bar */}
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-bold text-slate-900">Top thợ · DT &gt; 10tr · Tháng 08/2026</h2>
+                    <p className="text-xs text-slate-400 mt-0.5">3 kết quả · Cập nhật 08:47</p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setActiveNav('dashboard');
+                        alert('Đã ghim biểu đồ này vào Dashboard thành công!');
+                      }}
+                      className="px-4 py-2 bg-[#5B42F3] text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 hover:bg-indigo-700 shadow-md shadow-indigo-200 transition"
+                    >
+                      <Pin size={14} /> Ghim vào Dashboard
+                    </button>
+                    <button className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-700 hover:bg-slate-50">
+                      <Clock size={14} /> Lên lịch
+                    </button>
+                    <div className="flex items-center bg-slate-200/80 p-0.5 rounded-xl border border-slate-300/50">
+                      <button
+                        onClick={() => setDataViewMode('table')}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 ${
+                          dataViewMode === 'table' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
+                        }`}
+                      >
+                        <Table size={13} /> Bảng
+                      </button>
+                      <button
+                        onClick={() => setDataViewMode('chart')}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 ${
+                          dataViewMode === 'chart' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
+                        }`}
+                      >
+                        <BarChart2 size={13} /> Biểu đồ
+                      </button>
+                    </div>
+                    <button className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-emerald-700 flex items-center gap-1 hover:bg-emerald-50">
+                      <Download size={13} /> CSV
+                    </button>
+                    <button className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-indigo-700 flex items-center gap-1 hover:bg-indigo-50">
+                      <FileSpreadsheet size={13} /> Excel
+                    </button>
+                  </div>
+                </div>
+
+                {/* Filter Yellow Warning Banner */}
+                <div className="bg-amber-50/80 border border-amber-200 p-3 rounded-2xl flex items-center justify-between text-xs text-amber-800">
+                  <div className="flex items-center gap-2">
+                    <span className="text-amber-600">🏆</span>
+                    <span className="font-semibold">Đang lọc: doanh thu &gt; 10.000.000đ</span>
+                    <span className="text-amber-600">— từ kết quả truy vấn trước (Top 5 thợ tháng 08/2026)</span>
+                  </div>
+                  <button className="text-amber-700 hover:underline font-semibold text-[11px]">Xóa lọc</button>
+                </div>
+
+                {/* Top 3 Summary Stat Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="bg-white/70 backdrop-blur border border-slate-200/80 p-4 rounded-2xl">
+                    <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">TỔNG DOANH THU</div>
+                    <div className="text-xl font-extrabold text-slate-900 mt-1">37.500.000 đ</div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">3 thợ</div>
+                  </div>
+                  <div className="bg-white/70 backdrop-blur border border-slate-200/80 p-4 rounded-2xl">
+                    <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">TỔNG ĐƠN HT</div>
+                    <div className="text-xl font-extrabold text-slate-900 mt-1">100 đơn</div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">tháng 08/2026</div>
+                  </div>
+                  <div className="bg-white/70 backdrop-blur border border-slate-200/80 p-4 rounded-2xl">
+                    <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">TB DT / THỢ</div>
+                    <div className="text-xl font-extrabold text-slate-900 mt-1">12.5MM đ</div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">trung bình</div>
+                  </div>
+                </div>
+
+                {/* Data Table View OR Chart View */}
+                {dataViewMode === 'table' ? (
+                  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase tracking-wider">
+                        <tr>
+                          <th className="py-3 px-4">#</th>
+                          <th className="py-3 px-4">TÊN THỢ</th>
+                          <th className="py-3 px-4">DỊCH VỤ</th>
+                          <th className="py-3 px-4">ĐƠN HOÀN THÀNH</th>
+                          <th className="py-3 px-4">DOANH THU</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                        <tr className="hover:bg-slate-50/80 transition">
+                          <td className="py-3 px-4"><span className="w-5 h-5 rounded-full bg-amber-100 text-amber-700 font-bold text-[11px] flex items-center justify-center">1</span></td>
+                          <td className="py-3 px-4 font-bold text-slate-900">Nguyễn Văn A</td>
+                          <td className="py-3 px-4"><span className="px-2.5 py-1 rounded-full bg-purple-50 text-purple-700 text-[11px] font-semibold">Dọn dẹp</span></td>
+                          <td className="py-3 px-4">45 đơn</td>
+                          <td className="py-3 px-4 font-bold text-slate-900">15.500.000 đ</td>
+                        </tr>
+                        <tr className="hover:bg-slate-50/80 transition">
+                          <td className="py-3 px-4"><span className="w-5 h-5 rounded-full bg-slate-100 text-slate-600 font-bold text-[11px] flex items-center justify-center">2</span></td>
+                          <td className="py-3 px-4 font-bold text-slate-900">Trần Thị B</td>
+                          <td className="py-3 px-4"><span className="px-2.5 py-1 rounded-full bg-purple-50 text-purple-700 text-[11px] font-semibold">Điện nước</span></td>
+                          <td className="py-3 px-4">30 đơn</td>
+                          <td className="py-3 px-4 font-bold text-slate-900">12.000.000 đ</td>
+                        </tr>
+                        <tr className="hover:bg-slate-50/80 transition">
+                          <td className="py-3 px-4"><span className="w-5 h-5 rounded-full bg-amber-50 text-amber-800 font-bold text-[11px] flex items-center justify-center">3</span></td>
+                          <td className="py-3 px-4 font-bold text-slate-900">Lê Văn C</td>
+                          <td className="py-3 px-4"><span className="px-2.5 py-1 rounded-full bg-purple-50 text-purple-700 text-[11px] font-semibold">Sửa chữa</span></td>
+                          <td className="py-3 px-4">25 đơn</td>
+                          <td className="py-3 px-4 font-bold text-slate-900">10.000.000 đ</td>
+                        </tr>
+                      </tbody>
+                    </table>
+
+                    {/* Pagination Footer */}
+                    <div className="p-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400">
+                      <span>1–3 / 3 kết quả</span>
+                      <button className="w-6 h-6 rounded bg-[#5B42F3] text-white font-bold flex items-center justify-center">1</button>
                     </div>
                   </div>
                 ) : (
-                  <BotMessageCard key={msg.id} msg={msg} onPinWidget={handlePinWidget} />
-                )
-              )}
-
-              {isLoading && (
-                <div className="flex items-center gap-3 text-sm text-slate-500 animate-pulse">
-                  <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center text-indigo-600">
-                    <Sparkles size={16} />
+                  /* Biểu đồ giả lập */
+                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                    <div className="text-xs font-bold text-slate-500 uppercase">Doanh thu theo thợ (Đơn vị: VNĐ)</div>
+                    <div className="space-y-3">
+                      <div>
+                        <div className="flex justify-between text-xs font-bold text-slate-700 mb-1">
+                          <span>Nguyễn Văn A</span><span>15.500.000 đ</span>
+                        </div>
+                        <div className="w-full bg-slate-100 h-3 rounded-full overflow-hidden">
+                          <div className="bg-[#5B42F3] h-full w-[100%] rounded-full"></div>
+                        </div>
+                      </div>
+                      <div>
+                        <div className="flex justify-between text-xs font-bold text-slate-700 mb-1">
+                          <span>Trần Thị B</span><span>12.000.000 đ</span>
+                        </div>
+                        <div className="w-full bg-slate-100 h-3 rounded-full overflow-hidden">
+                          <div className="bg-[#5B42F3]/80 h-full w-[77%] rounded-full"></div>
+                        </div>
+                      </div>
+                      <div>
+                        <div className="flex justify-between text-xs font-bold text-slate-700 mb-1">
+                          <span>Lê Văn C</span><span>10.000.000 đ</span>
+                        </div>
+                        <div className="w-full bg-slate-100 h-3 rounded-full overflow-hidden">
+                          <div className="bg-[#5B42F3]/60 h-full w-[64%] rounded-full"></div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                  Đang đóng gói Schema, sinh truy vấn SQL và kiểm tra bảo mật Read-Only...
-                </div>
-              )}
+                )}
+              </div>
             </div>
-
-            {/* Khung nhập câu hỏi tiếng Việt ở dưới cùng */}
-            <div className="p-4 bg-white border-t border-slate-200">
-              <form onSubmit={handleSendQuestion} className="max-w-4xl mx-auto flex gap-3">
-                <input
-                  type="text"
-                  value={inputQuestion}
-                  onChange={(e) => setInputQuestion(e.target.value)}
-                  placeholder="Nhập câu hỏi tiếng Việt (VD: Tháng này dịch vụ nào có doanh thu cao nhất?)..."
-                  className="flex-1 px-4 py-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-                <button
-                  type="submit"
-                  disabled={isLoading}
-                  className="px-5 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white rounded-xl font-medium text-sm flex items-center gap-2 transition shadow-sm"
-                >
-                  <Send size={16} /> Truy vấn
-                </button>
-              </form>
-            </div>
-          </>
+          )
         )}
 
-        {/* MÀN HÌNH 2: DASHBOARD ĐÃ GHIM */}
+        {/* ========================================================= */}
+        {/* SCREEN B: DASHBOARD (ẢNH 2)                               */}
+        {/* ========================================================= */}
         {activeNav === 'dashboard' && (
-          <div className="flex-1 overflow-y-auto p-6">
-            {pinnedWidgets.length === 0 ? (
-              <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-slate-500">
-                Chưa có biểu đồ nào được ghim. Hãy bấm nút <strong>"Ghim"</strong> ở các câu trả lời trong phần Chat!
+          <div className="flex-1 overflow-y-auto p-8 max-w-6xl mx-auto w-full space-y-6">
+            <div className="flex items-start justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Dashboard</h2>
+                <p className="text-sm text-slate-500 mt-1">Biểu đồ đã được ghim từ Query Studio · Tháng 08/2026</p>
               </div>
-            ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {pinnedWidgets.map(w => (
-                  <div key={w.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                    <h3 className="font-semibold text-sm text-slate-800 mb-2">{w.text}</h3>
-                    <DynamicSimpleChart data={w.data} />
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-slate-400">3 widget đang hiển thị</span>
+                <button className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 hover:bg-slate-50">
+                  + Thêm widget
+                </button>
+              </div>
+            </div>
+
+            {/* Grid Widgets */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              
+              {/* Widget 1: TỔNG DOANH THU */}
+              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4 relative">
+                <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase">
+                  <span>💰</span> TỔNG DOANH THU
+                </div>
+                <div>
+                  <div className="text-3xl font-extrabold text-slate-900">63,45M</div>
+                  <div className="text-xs text-slate-400 mt-1">đ · Tháng 08/2026</div>
+                </div>
+                <div className="text-xs font-bold text-emerald-600 flex items-center gap-1">
+                  ↗ +12,4% so với tháng 7
+                </div>
+                <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-100">
+                  <div>
+                    <div className="text-[10px] text-slate-400 uppercase font-bold">TỔNG ĐƠN</div>
+                    <div className="text-base font-bold text-slate-900">140</div>
                   </div>
-                ))}
+                  <div>
+                    <div className="text-[10px] text-slate-400 uppercase font-bold">SỐ THỢ</div>
+                    <div className="text-base font-bold text-slate-900">5</div>
+                  </div>
+                </div>
+                <div className="text-[10px] text-slate-400 text-right flex items-center justify-end gap-1">
+                  <Pin size={10} /> Ghim 08:50
+                </div>
               </div>
-            )}
+
+              {/* Widget 2: Top 5 thợ · Doanh thu cao nhất */}
+              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-sm">Top 5 thợ · Doanh thu cao nhất</h3>
+                    <p className="text-[11px] text-slate-400">Tháng 08/2026 · Đơn vị: triệu đ</p>
+                  </div>
+                  <span className="text-[10px] text-slate-400 flex items-center gap-1"><Pin size={10} /> Ghim 08:51</span>
+                </div>
+                <div className="h-44 flex items-end justify-between gap-3 pt-6 px-2 border-b border-slate-100">
+                  <div className="flex-1 flex flex-col items-center gap-2 h-full justify-end">
+                    <div className="w-full bg-[#5B42F3] rounded-t-lg h-[85%]"></div>
+                    <span className="text-[10px] text-slate-500 font-bold">A V.</span>
+                  </div>
+                  <div className="flex-1 flex flex-col items-center gap-2 h-full justify-end">
+                    <div className="w-full bg-indigo-500 rounded-t-lg h-[65%]"></div>
+                    <span className="text-[10px] text-slate-500 font-bold">B T.</span>
+                  </div>
+                  <div className="flex-1 flex flex-col items-center gap-2 h-full justify-end">
+                    <div className="w-full bg-indigo-400 rounded-t-lg h-[50%]"></div>
+                    <span className="text-[10px] text-slate-500 font-bold">C V.</span>
+                  </div>
+                  <div className="flex-1 flex flex-col items-center gap-2 h-full justify-end">
+                    <div className="w-full bg-indigo-300 rounded-t-lg h-[40%]"></div>
+                    <span className="text-[10px] text-slate-500 font-bold">D T.</span>
+                  </div>
+                  <div className="flex-1 flex flex-col items-center gap-2 h-full justify-end">
+                    <div className="w-full bg-indigo-200 rounded-t-lg h-[30%]"></div>
+                    <span className="text-[10px] text-slate-500 font-bold">E V.</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Widget 3: Tỷ lệ đơn Hoàn thành vs Hủy */}
+              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+                <h3 className="font-bold text-slate-900 text-sm">Tỷ lệ đơn Hoàn thành vs Hủy</h3>
+                <p className="text-[11px] text-slate-400">Tháng 07/2026 · 1.284 đơn</p>
+                <div className="flex items-center gap-4 pt-2">
+                  <div className="w-24 h-24 rounded-full border-8 border-[#5B42F3] border-t-rose-400 flex items-center justify-center font-bold text-xs">
+                    86%
+                  </div>
+                  <div className="space-y-1 text-xs">
+                    <div className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full bg-[#5B42F3]"></span> Hoàn thành (86%)</div>
+                    <div className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full bg-rose-400"></span> Hủy đơn (14%)</div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
-        {/* MÀN HÌNH 3: TỪ ĐIỂN DỮ LIỆU (DATA DICTIONARY) */}
-        {activeNav === 'dictionary' && (
-          <div className="flex-1 overflow-y-auto p-6 max-w-4xl">
-            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
-              <h3 className="font-bold text-slate-800 text-base">Định nghĩa thuật ngữ kinh doanh cho AI</h3>
-              <p className="text-xs text-slate-500">
-                Các quy tắc tại đây sẽ được Spring Boot tự động nối vào System Prompt giúp chống ảo giác (Hallucination) khi AI viết SQL.
-              </p>
-              <div className="space-y-3">
-                {dictionaries.map(d => (
-                  <div key={d.id} className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 flex justify-between items-center">
+        {/* ========================================================= */}
+        {/* SCREEN C: DATA SOURCES (ẢNH 3)                            */}
+        {/* ========================================================= */}
+        {activeNav === 'sources' && (
+          <div className="flex-1 overflow-y-auto p-8 max-w-6xl mx-auto w-full space-y-6">
+            <div>
+              <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Nguồn dữ liệu</h2>
+              <p className="text-sm text-slate-500 mt-1">Quản lý các kết nối tới Database đang hoạt động</p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              
+              {/* Source 1 */}
+              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center font-bold text-slate-700">🐘</div>
                     <div>
-                      <span className="font-bold text-indigo-700 text-sm">{d.term}</span>
-                      <p className="text-xs text-slate-600 mt-0.5">{d.rule}</p>
+                      <h3 className="font-bold text-slate-900 text-sm">homeservice_prod</h3>
+                      <p className="text-xs text-slate-400">PostgreSQL 15</p>
                     </div>
                   </div>
-                ))}
+                  <span className="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-600 border border-emerald-200">● Kết nối</span>
+                </div>
+                <div className="text-xs text-slate-500">☰ 42 bảng</div>
+                <div className="grid grid-cols-2 gap-3 pt-2">
+                  <button className="py-2 bg-indigo-50 text-[#5B42F3] rounded-xl text-xs font-semibold hover:bg-indigo-100">Xem schema</button>
+                  <button className="py-2 bg-slate-50 border border-slate-200 text-slate-700 rounded-xl text-xs font-semibold hover:bg-slate-100">Cài đặt</button>
+                </div>
+              </div>
+
+              {/* Source 2 */}
+              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center font-bold text-slate-700">📊</div>
+                    <div>
+                      <h3 className="font-bold text-slate-900 text-sm">analytics_dw</h3>
+                      <p className="text-xs text-slate-400">BigQuery</p>
+                    </div>
+                  </div>
+                  <span className="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-600 border border-emerald-200">● Kết nối</span>
+                </div>
+                <div className="text-xs text-slate-500">☰ 18 bảng</div>
+                <div className="grid grid-cols-2 gap-3 pt-2">
+                  <button className="py-2 bg-indigo-50 text-[#5B42F3] rounded-xl text-xs font-semibold hover:bg-indigo-100">Xem schema</button>
+                  <button className="py-2 bg-slate-50 border border-slate-200 text-slate-700 rounded-xl text-xs font-semibold hover:bg-slate-100">Cài đặt</button>
+                </div>
+              </div>
+
+              {/* Source 3 */}
+              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center font-bold text-slate-700">🐬</div>
+                    <div>
+                      <h3 className="font-bold text-slate-900 text-sm">legacy_mysql</h3>
+                      <p className="text-xs text-slate-400">MySQL 8.0</p>
+                    </div>
+                  </div>
+                  <span className="px-3 py-1 rounded-full text-xs font-semibold bg-rose-50 text-rose-600 border border-rose-200">● Ngắt kết nối</span>
+                </div>
+                <div className="text-xs text-slate-500">☰ 31 bảng</div>
+                <div className="grid grid-cols-2 gap-3 pt-2">
+                  <button className="py-2 bg-indigo-50 text-[#5B42F3] rounded-xl text-xs font-semibold hover:bg-indigo-100">Xem schema</button>
+                  <button className="py-2 bg-slate-50 border border-slate-200 text-slate-700 rounded-xl text-xs font-semibold hover:bg-slate-100">Cài đặt</button>
+                </div>
+              </div>
+
+              {/* Add Source Box */}
+              <div className="border-2 border-dashed border-slate-200 p-6 rounded-2xl flex flex-col items-center justify-center text-center space-y-2 hover:border-indigo-300 cursor-pointer transition">
+                <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-500">
+                  <Plus size={20} />
+                </div>
+                <span className="font-semibold text-xs text-slate-700">Thêm nguồn dữ liệu</span>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ========================================================= */}
+        {/* SCREEN D: DICTIONARY & SETTINGS (ẢNH 4, 5, 6)            */}
+        {/* ========================================================= */}
+        {activeNav === 'settings' && (
+          <div className="flex-1 overflow-y-auto p-8 max-w-6xl mx-auto w-full space-y-6">
+            <div>
+              <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Cài đặt & Từ điển</h2>
+              <p className="text-sm text-slate-500 mt-1">Định nghĩa thuật ngữ nghiệp vụ giúp AI hiểu ngữ cảnh chính xác hơn</p>
+            </div>
+
+            {/* Sub Tabs Toggle */}
+            <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200 w-fit">
+              <button
+                onClick={() => setSettingsTab('dictionary')}
+                className={`px-4 py-2 rounded-lg text-xs font-semibold transition ${
+                  settingsTab === 'dictionary' ? 'bg-[#5B42F3] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                Từ điển dữ liệu
+              </button>
+              <button
+                onClick={() => setSettingsTab('sources')}
+                className={`px-4 py-2 rounded-lg text-xs font-semibold transition ${
+                  settingsTab === 'sources' ? 'bg-[#5B42F3] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                Nguồn dữ liệu
+              </button>
+              <button
+                onClick={() => setSettingsTab('connect')}
+                className={`px-4 py-2 rounded-lg text-xs font-semibold transition ${
+                  settingsTab === 'connect' ? 'bg-[#5B42F3] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                Kết nối DB
+              </button>
+            </div>
+
+            {/* TAB 1: TỪ ĐIỂN NGHỆP VỤ (ẢNH 4) */}
+            {settingsTab === 'dictionary' && (
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-base">Từ điển nghiệp vụ</h3>
+                    <p className="text-xs text-slate-400 mt-0.5">4 thuật ngữ đã định nghĩa</p>
+                  </div>
+                  <button className="px-4 py-2.5 bg-[#5B42F3] text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-indigo-100">
+                    <Plus size={16} /> Thêm thuật ngữ
+                  </button>
+                </div>
+
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase">
+                    <tr>
+                      <th className="py-3 px-4">THUẬT NGỮ</th>
+                      <th className="py-3 px-4">LOGIC / QUY TẮC SQL</th>
+                      <th className="py-3 px-4">MÔ TẢ</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                    {INITIAL_DICTIONARY.map(d => (
+                      <tr key={d.id} className="hover:bg-slate-50 transition">
+                        <td className="py-3 px-4 font-bold text-slate-900 flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-[#5B42F3]"></span> {d.term}
+                        </td>
+                        <td className="py-3 px-4 font-mono text-indigo-600 bg-indigo-50/50 rounded-lg">{d.rule}</td>
+                        <td className="py-3 px-4 text-slate-500">{d.desc}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* TAB 2: NGUỒN DỮ LIỆU ĐÃ KẾT NỐI (ẢNH 5) */}
+            {settingsTab === 'sources' && (
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+                <h3 className="font-bold text-slate-900 text-sm">Nguồn dữ liệu đã kết nối</h3>
+                <div className="space-y-3">
+                  <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-lg bg-white border border-slate-200 flex items-center justify-center">🛢️</div>
+                      <div>
+                        <div className="font-bold text-slate-900 text-xs">homeservice_prod</div>
+                        <div className="text-[11px] text-slate-400">PostgreSQL · db.homeservice.vn:5432</div>
+                      </div>
+                    </div>
+                    <span className="px-3 py-1 bg-emerald-100 text-emerald-700 text-xs font-semibold rounded-full">● Đã kết nối</span>
+                  </div>
+                  <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-lg bg-white border border-slate-200 flex items-center justify-center">📊</div>
+                      <div>
+                        <div className="font-bold text-slate-900 text-xs">analytics_dw</div>
+                        <div className="text-[11px] text-slate-400">BigQuery · project.region.bigquery</div>
+                      </div>
+                    </div>
+                    <span className="px-3 py-1 bg-emerald-100 text-emerald-700 text-xs font-semibold rounded-full">● Đã kết nối</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 3: FORM THÊM KẾT NỐI MỚI (ẢNH 6) */}
+            {settingsTab === 'connect' && (
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 max-w-xl space-y-4">
+                <h3 className="font-bold text-slate-900 text-base">Thêm kết nối mới</h3>
+                <div className="space-y-3 text-xs">
+                  <div>
+                    <label className="font-semibold text-slate-700 block mb-1">Tên kết nối</label>
+                    <input type="text" placeholder="homeservice_staging" className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                  </div>
+                  <div>
+                    <label className="font-semibold text-slate-700 block mb-1">Host / URL</label>
+                    <input type="text" placeholder="db.staging.vn:5432" className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                  </div>
+                  <div>
+                    <label className="font-semibold text-slate-700 block mb-1">Database</label>
+                    <input type="text" placeholder="homeservice_db" className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                  </div>
+                  <div>
+                    <label className="font-semibold text-slate-700 block mb-1">Username</label>
+                    <input type="text" placeholder="admin" className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </main>
