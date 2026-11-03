@@ -113,9 +113,220 @@ export const chatService = {
 
         return {
           sessionId: newSessionId,
+          messageId: Date.now(),
           aiMessage,
           sqlQuery,
           tableData,
+          chartType: 'TABLE',
+          currentPage: 1,
+          totalPages: 1,
+          totalRecords: tableData.length,
+        };
+      }
+      throw error;
+    }
+  },
+
+  /**
+   * 2.1b Hỏi AI qua SSE Streaming — GET /api/admin/ask/stream
+   * 
+   * Backend (Spring SseEmitter) gửi events theo format:
+   *   event:STATUS
+   *   data:"Initializing session & message history..."
+   *   
+   *   event:RESULT
+   *   data:{"sessionId":1,"messageId":2,"aiMessage":"...","sqlQuery":"...","tableData":[...],"chartType":"TABLE","currentPage":1,"totalPages":3,"totalRecords":25}
+   *   
+   *   event:ERROR
+   *   data:"Error message here"
+   *
+   * Lưu ý: sendEvent() của backend dùng objectMapper.writeValueAsString(data),
+   * nên String sẽ bị wrap thêm dấu ngoặc kép ("\"...\"""), 
+   * còn Object (AiQueryResponseData) sẽ là JSON object string.
+   *
+   * @param {string} question
+   * @param {number|null} sessionId
+   * @param {Object} callbacks - { onStatus, onResult, onError, onComplete }
+   * @returns {{ close: Function }} - Trả về object có close() để hủy kết nối
+   */
+  askQuestionStream(question, sessionId = null, callbacks = {}) {
+    const { onStatus, onResult, onError, onComplete } = callbacks;
+
+    if (!question || question.trim().length < 5) {
+      onError?.('Câu hỏi phải chứa từ 5 đến 500 ký tự.');
+      return null;
+    }
+
+    const baseUrl = authStorage.getBaseUrl() || '';
+    const params = new URLSearchParams({ question: question.trim() });
+    if (sessionId) params.append('sessionId', sessionId);
+
+    const token = authStorage.getToken();
+    const url = `${baseUrl}/api/admin/ask/stream?${params.toString()}`;
+
+    // Dùng fetch-based SSE để gửi được Authorization header
+    const controller = new AbortController();
+
+    fetch(url, {
+      method: 'GET',
+      headers: {
+        'Accept': 'text/event-stream',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+      },
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          if (response.status === 401) {
+            authStorage.clear();
+            window.dispatchEvent(new CustomEvent('auth:unauthorized'));
+          }
+          throw new Error(`SSE connection failed (HTTP ${response.status})`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          
+          // SSE events được phân cách bởi double newline (\n\n)
+          const eventBlocks = buffer.split('\n\n');
+          // Phần cuối chưa hoàn chỉnh giữ lại trong buffer
+          buffer = eventBlocks.pop() || '';
+
+          for (const block of eventBlocks) {
+            if (!block.trim()) continue;
+
+            let eventName = '';
+            const dataLines = [];
+
+            const lines = block.split('\n');
+            for (const line of lines) {
+              if (line.startsWith('event:')) {
+                eventName = line.slice(6).trim();
+              } else if (line.startsWith('data:')) {
+                dataLines.push(line.slice(5));
+              }
+            }
+
+            if (!eventName || dataLines.length === 0) continue;
+
+            // Ghép tất cả data lines lại (Spring có thể split data dài ra nhiều dòng)
+            let rawData = dataLines.join('\n').trim();
+
+            // Backend sendEvent() dùng objectMapper.writeValueAsString():
+            // - String input -> output: "\"chuỗi gốc\"" (JSON-encoded string = chuỗi có ngoặc kép bao ngoài)
+            // - Object input -> output: "{...}" (JSON object string)
+            // Cần xử lý cả 2 trường hợp
+
+            if (eventName === 'STATUS') {
+              // rawData có thể là: "Initializing session..." (plain)
+              // hoặc: "\"Initializing session...\"" (double-encoded bởi objectMapper)
+              let statusText = rawData;
+              // Thử parse nếu là JSON string (bỏ lớp ngoặc kép ngoài)
+              if (rawData.startsWith('"') && rawData.endsWith('"')) {
+                try {
+                  statusText = JSON.parse(rawData);
+                } catch {
+                  statusText = rawData.slice(1, -1);
+                }
+              }
+              onStatus?.(statusText);
+
+            } else if (eventName === 'RESULT') {
+              // rawData là JSON string của AiQueryResponseData
+              // Có thể bị double-encode: "\"{ ... }\"" hoặc đúng chuẩn: "{ ... }"
+              try {
+                let parsed = JSON.parse(rawData);
+                // Nếu parsed vẫn là string (double-encoded), parse lần nữa
+                if (typeof parsed === 'string') {
+                  parsed = JSON.parse(parsed);
+                }
+                onResult?.(parsed);
+              } catch (parseErr) {
+                console.error('[SSE] Failed to parse RESULT data:', parseErr, rawData);
+                onError?.('Không thể đọc dữ liệu phản hồi từ AI.');
+              }
+
+            } else if (eventName === 'ERROR') {
+              let errorText = rawData;
+              if (rawData.startsWith('"') && rawData.endsWith('"')) {
+                try {
+                  errorText = JSON.parse(rawData);
+                } catch {
+                  errorText = rawData.slice(1, -1);
+                }
+              }
+              onError?.(errorText);
+            }
+          }
+        }
+
+        onComplete?.();
+      })
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
+
+        // Fallback to mock nếu network error và mock đang bật
+        if (authStorage.isMockEnabled()) {
+          _mockStreamFallback(question, sessionId, callbacks);
+          return;
+        }
+        onError?.(err.message || 'Lỗi kết nối SSE');
+      });
+
+    return {
+      close: () => controller.abort(),
+    };
+  },
+
+  /**
+   * 2.1c Phân trang dữ liệu — POST /api/admin/chat/message/{messageId}?page=1&limit=10
+   * @param {number} messageId
+   * @param {number} page
+   * @param {number} limit
+   */
+  async getNextPage(messageId, page = 1, limit = 10) {
+    try {
+      return await apiRequest(`/api/admin/chat/message/${messageId}`, {
+        method: 'POST',
+        params: { page, limit },
+      });
+    } catch (error) {
+      if (error.isNetworkError && authStorage.isMockEnabled()) {
+        console.warn('Backend chưa chạy, giả lập phân trang...');
+        // Mock pagination data
+        const mockAllData = [
+          { id: 1, ten_tho: 'Nguyễn Văn A', dich_vu: 'Dọn dẹp vệ sinh', don_hoan_thanh: 45, doanh_thu: 15500000 },
+          { id: 2, ten_tho: 'Trần Thị B', dich_vu: 'Sửa điện nước', don_hoan_thanh: 30, doanh_thu: 12000000 },
+          { id: 3, ten_tho: 'Lê Văn C', dich_vu: 'Sửa chữa điện lạnh', don_hoan_thanh: 25, doanh_thu: 10000000 },
+          { id: 4, ten_tho: 'Phạm Minh D', dich_vu: 'Dọn dẹp văn phòng', don_hoan_thanh: 22, doanh_thu: 8500000 },
+          { id: 5, ten_tho: 'Hoàng Anh E', dich_vu: 'Vệ sinh máy lạnh', don_hoan_thanh: 18, doanh_thu: 7200000 },
+          { id: 6, ten_tho: 'Trương Văn F', dich_vu: 'Sửa điện nước', don_hoan_thanh: 16, doanh_thu: 6800000 },
+          { id: 7, ten_tho: 'Đỗ Thị G', dich_vu: 'Dọn dẹp vệ sinh', don_hoan_thanh: 14, doanh_thu: 5500000 },
+          { id: 8, ten_tho: 'Vũ Minh H', dich_vu: 'Bảo trì điện lạnh', don_hoan_thanh: 12, doanh_thu: 5200000 },
+          { id: 9, ten_tho: 'Ngô Văn I', dich_vu: 'Sửa ống nước', don_hoan_thanh: 10, doanh_thu: 4800000 },
+          { id: 10, ten_tho: 'Bùi Thị K', dich_vu: 'Vệ sinh công nghiệp', don_hoan_thanh: 8, doanh_thu: 4200000 },
+          { id: 11, ten_tho: 'Lý Văn L', dich_vu: 'Lắp đặt điện', don_hoan_thanh: 7, doanh_thu: 3900000 },
+          { id: 12, ten_tho: 'Hồ Minh M', dich_vu: 'Sơn nhà', don_hoan_thanh: 5, doanh_thu: 3100000 },
+        ];
+
+        const totalRecords = mockAllData.length;
+        const totalPages = Math.ceil(totalRecords / limit);
+        const offset = (page - 1) * limit;
+        const tableData = mockAllData.slice(offset, offset + limit);
+
+        return {
+          messageId,
+          tableData,
+          currentPage: page,
+          totalPages,
+          totalRecords,
         };
       }
       throw error;
@@ -227,3 +438,45 @@ export const chatService = {
     }
   },
 };
+
+/**
+ * Mock SSE stream fallback khi backend chưa chạy
+ */
+async function _mockStreamFallback(question, sessionId, callbacks) {
+  const { onStatus, onResult, onError, onComplete } = callbacks;
+
+  const statuses = [
+    'Initializing session & message history...',
+    'Translating natural language to SQL...',
+    'Executing query & paginating data...',
+    'Analyzing results & determining chart type...',
+  ];
+
+  for (const status of statuses) {
+    await new Promise((r) => setTimeout(r, 600));
+    onStatus?.(status);
+  }
+
+  await new Promise((r) => setTimeout(r, 400));
+
+  const newSessionId = sessionId || Date.now();
+  const result = {
+    sessionId: newSessionId,
+    messageId: Date.now(),
+    aiMessage: `### 📊 Kết quả phân tích (SSE Stream)\nĐã phân tích câu hỏi: **"${question}"**\n\nHệ thống đã truy vấn cơ sở dữ liệu **PostgreSQL (homeservice_prod)** qua SSE streaming và trích xuất dữ liệu thành công.`,
+    sqlQuery: `SELECT t.full_name, COUNT(b.id) AS orders, SUM(p.amount) AS revenue\nFROM technicians t\nJOIN bookings b ON t.id = b.tech_id\nJOIN payments p ON b.id = p.booking_id\nWHERE b.status = 'COMPLETED'\nGROUP BY t.full_name\nORDER BY revenue DESC\nLIMIT 10;`,
+    tableData: [
+      { id: 1, ten_tho: 'Nguyễn Văn A', dich_vu: 'Dọn dẹp', don_hoan_thanh: 45, doanh_thu: 15500000 },
+      { id: 2, ten_tho: 'Trần Thị B', dich_vu: 'Điện nước', don_hoan_thanh: 30, doanh_thu: 12000000 },
+      { id: 3, ten_tho: 'Lê Văn C', dich_vu: 'Sửa chữa', don_hoan_thanh: 25, doanh_thu: 10000000 },
+    ],
+    chartType: 'TABLE',
+    currentPage: 1,
+    totalPages: 2,
+    totalRecords: 12,
+  };
+
+  onResult?.(result);
+  onComplete?.();
+}
+
