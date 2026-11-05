@@ -5,9 +5,11 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   FileText, Plus, Clock, Play, Trash2, ChevronDown, ChevronRight,
   Calendar, ToggleLeft, ToggleRight, RefreshCw, Eye, X, Check,
-  AlertCircle, Timer, Code, Copy, Search, Sun, Moon, Repeat
+  AlertCircle, Timer, Code, Copy, Search, Sun, Moon, Repeat,
+  BarChart2, Table, LayoutList, Layers
 } from 'lucide-react';
 import { reportService } from '../services/reportService';
+import DataChart from './DataChart';
 
 // ─────────────────────────────────────────────
 // Visual schedule picker → cron expression
@@ -270,6 +272,9 @@ export default function ReportPage({ showToast, prefillSql = null, prefillTitle 
   const [expandedReport, setExpandedReport] = useState(null);
   const [snapshotData, setSnapshotData] = useState(null);
   const [snapshotLoading, setSnapshotLoading] = useState(false);
+  const [snapshotViewMode, setSnapshotViewMode] = useState('both'); // 'both' | 'chart' | 'table'
+  const [modalChartType, setModalChartType] = useState(null);
+  const [runningReportId, setRunningReportId] = useState(null);
   const [searchKeyword, setSearchKeyword] = useState('');
 
   // Create modal
@@ -364,20 +369,36 @@ export default function ReportPage({ showToast, prefillSql = null, prefillTitle 
   };
 
   const handleRunNow = async (reportId) => {
+    setRunningReportId(reportId);
     try {
       await reportService.runReportNow(reportId);
-      showToast?.('success', 'Đã kích hoạt chạy ngay!', 'Chạy Report');
-    } catch (err) { showToast?.('error', err.message, 'Lỗi'); }
+      showToast?.('success', 'Đã kích hoạt chạy ngay và làm mới kết quả!', 'Chạy Report');
+      // Tự động tải và hiển thị ngay kết quả mới nhất kèm biểu đồ
+      await handleViewSnapshot(reportId);
+    } catch (err) {
+      showToast?.('error', err.message, 'Lỗi chạy report');
+    } finally {
+      setRunningReportId(null);
+    }
   };
 
   const handleViewSnapshot = async (reportId) => {
     setSnapshotLoading(true);
     try {
       const data = await reportService.getLatestSnapshot(reportId);
-      setSnapshotData(data);
+      const report = reports.find((r) => r.id === reportId);
+      const resolvedChartType = report?.chartType || 'BAR_CHART';
+      setSnapshotData({
+        ...data,
+        chartType: resolvedChartType,
+      });
+      setModalChartType(resolvedChartType);
+      setSnapshotViewMode('both');
     } catch (err) {
       showToast?.('error', err.message, 'Lỗi snapshot');
-    } finally { setSnapshotLoading(false); }
+    } finally {
+      setSnapshotLoading(false);
+    }
   };
 
   const filteredReports = reports.filter((r) => {
@@ -523,9 +544,18 @@ export default function ReportPage({ showToast, prefillSql = null, prefillTitle 
                     </button>
                     <button
                       onClick={() => handleRunNow(report.id)}
-                      className="px-3.5 py-2 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl text-xs font-semibold flex items-center gap-1.5 hover:bg-emerald-100 transition"
+                      disabled={runningReportId === report.id || snapshotLoading}
+                      className="px-3.5 py-2 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl text-xs font-semibold flex items-center gap-1.5 hover:bg-emerald-100 transition disabled:opacity-50"
                     >
-                      <Play size={13} /> Chạy ngay
+                      {runningReportId === report.id ? (
+                        <>
+                          <RefreshCw size={13} className="animate-spin" /> Đang chạy & lấy kết quả...
+                        </>
+                      ) : (
+                        <>
+                          <Play size={13} /> Chạy ngay
+                        </>
+                      )}
                     </button>
                     <button
                       onClick={() => handleViewSnapshot(report.id)}
@@ -716,55 +746,193 @@ export default function ReportPage({ showToast, prefillSql = null, prefillTitle 
 
       {/* ── Snapshot Modal ── */}
       {snapshotData && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden max-h-[80vh] flex flex-col">
-            <div className="p-5 border-b border-slate-200 flex items-center justify-between shrink-0">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden max-h-[88vh] flex flex-col animate-fadeIn">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0 bg-slate-50/50">
               <div>
-                <h3 className="font-bold text-slate-900 text-base">{snapshotData.reportTitle}</h3>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  Trạng thái: <span className={`font-bold ${snapshotData.status === 'SUCCESS' ? 'text-emerald-600' : 'text-rose-600'}`}>{snapshotData.status}</span>
-                  {' · '}{snapshotData.executionDurationMs}ms
-                  {' · '}{snapshotData.totalRecords} bản ghi
-                  {' · '}{formatDateTime(snapshotData.executedAt)}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="font-bold text-slate-900 text-base">{snapshotData.reportTitle}</h3>
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-[#5B42F3] border border-indigo-100">
+                    {modalChartType || snapshotData.chartType || 'BAR_CHART'}
+                  </span>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                    snapshotData.status === 'SUCCESS' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
+                  }`}>
+                    {snapshotData.status === 'SUCCESS' ? '✓ SUCCESS' : '✗ FAILED'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-1 flex items-center gap-2 flex-wrap">
+                  <span>Thời gian chạy: <strong>{snapshotData.executionDurationMs ?? 0}ms</strong></span>
+                  <span>·</span>
+                  <span>Tổng số: <strong>{snapshotData.totalRecords ?? 0} bản ghi</strong></span>
+                  <span>·</span>
+                  <span>Lúc: {formatDateTime(snapshotData.executedAt)}</span>
                 </p>
               </div>
-              <button onClick={() => setSnapshotData(null)} className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100">
-                <X size={18} />
-              </button>
+
+              <div className="flex items-center gap-3">
+                {/* View Mode Toggle: Cả hai / Biểu đồ / Bảng */}
+                <div className="flex items-center bg-slate-200/70 p-1 rounded-xl text-xs font-semibold">
+                  <button
+                    type="button"
+                    onClick={() => setSnapshotViewMode('both')}
+                    className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer ${
+                      snapshotViewMode === 'both'
+                        ? 'bg-white text-[#5B42F3] shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <Repeat size={13} />
+                    <span>Cả hai</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSnapshotViewMode('chart')}
+                    className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer ${
+                      snapshotViewMode === 'chart'
+                        ? 'bg-white text-[#5B42F3] shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <BarChart2 size={13} />
+                    <span>Biểu đồ</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSnapshotViewMode('table')}
+                    className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer ${
+                      snapshotViewMode === 'table'
+                        ? 'bg-white text-[#5B42F3] shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <Table size={13} />
+                    <span>Bảng</span>
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setSnapshotData(null)}
+                  className="text-slate-400 hover:text-slate-600 p-2 rounded-xl hover:bg-slate-200/50 transition cursor-pointer"
+                  title="Đóng modal"
+                >
+                  <X size={18} />
+                </button>
+              </div>
             </div>
-            <div className="flex-1 overflow-auto p-5">
+
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
               {snapshotData.errorMessage ? (
                 <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl text-sm text-rose-700 flex items-center gap-2">
                   <AlertCircle size={16} /> {snapshotData.errorMessage}
                 </div>
               ) : snapshotData.resultData && Array.isArray(snapshotData.resultData) && snapshotData.resultData.length > 0 ? (
-                <div className="overflow-x-auto rounded-xl border border-slate-200">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase tracking-wider">
-                      <tr>
-                        <th className="py-3 px-4">#</th>
-                        {Object.keys(snapshotData.resultData[0]).map((key) => (
-                          <th key={key} className="py-3 px-4">{key.replace(/_/g, ' ').toUpperCase()}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                      {snapshotData.resultData.map((row, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50 transition">
-                          <td className="py-3 px-4">{idx + 1}</td>
-                          {Object.values(row).map((val, i) => (
-                            <td key={i} className="py-3 px-4">
-                              {typeof val === 'number' ? new Intl.NumberFormat('vi-VN').format(val) : val === null ? '—' : String(val)}
-                            </td>
+                <>
+                  {/* Biểu đồ trực quan */}
+                  {(snapshotViewMode === 'both' || snapshotViewMode === 'chart') && (
+                    <div className="bg-slate-50/70 p-5 rounded-2xl border border-slate-200 space-y-3">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <div className="text-xs font-bold text-slate-700 flex items-center gap-2">
+                          <BarChart2 size={15} className="text-[#5B42F3]" />
+                          <span>Biểu đồ trực quan kết quả snapshot</span>
+                        </div>
+                        {/* Bộ chọn kiểu biểu đồ nhanh */}
+                        <div className="flex items-center gap-1 text-[11px] font-medium bg-white p-1 rounded-xl border border-slate-200">
+                          <span className="text-slate-400 px-1 text-[10px] font-bold uppercase">Kiểu:</span>
+                          {[
+                            { type: 'BAR_CHART', label: 'Cột', icon: '📊' },
+                            { type: 'PIE_CHART', label: 'Tròn', icon: '🥧' },
+                            { type: 'METRIC', label: 'Metric', icon: '🔢' },
+                          ].map((item) => (
+                            <button
+                              key={item.type}
+                              type="button"
+                              onClick={() => setModalChartType(item.type)}
+                              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 transition cursor-pointer ${
+                                (modalChartType || snapshotData.chartType) === item.type
+                                  ? 'bg-[#5B42F3] text-white shadow-xs'
+                                  : 'text-slate-600 hover:bg-slate-100'
+                              }`}
+                            >
+                              <span>{item.icon}</span>
+                              <span>{item.label}</span>
+                            </button>
                           ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                        </div>
+                      </div>
+
+                      <DataChart
+                        chartType={modalChartType || snapshotData.chartType || 'BAR_CHART'}
+                        tableData={snapshotData.resultData}
+                        compact={false}
+                        showHeader={false}
+                        className="bg-white p-5 rounded-xl border border-slate-200/80 shadow-xs"
+                      />
+                    </div>
+                  )}
+
+                  {/* Bảng dữ liệu chi tiết */}
+                  {(snapshotViewMode === 'both' || snapshotViewMode === 'table') && (
+                    <div className="space-y-2.5">
+                      {snapshotViewMode === 'both' && (
+                        <div className="text-xs font-bold text-slate-700 flex items-center gap-2 pt-2">
+                          <Table size={15} className="text-[#5B42F3]" />
+                          <span>Chi tiết bảng dữ liệu ({snapshotData.resultData.length} bản ghi)</span>
+                        </div>
+                      )}
+                      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                        <table className="w-full text-left border-collapse text-xs">
+                          <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase tracking-wider">
+                            <tr>
+                              <th className="py-3 px-4 w-12 text-center">#</th>
+                              {Object.keys(snapshotData.resultData[0]).map((key) => (
+                                <th key={key} className="py-3 px-4">
+                                  {key.replace(/_/g, ' ').toUpperCase()}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                            {snapshotData.resultData.map((row, idx) => (
+                              <tr key={idx} className="hover:bg-indigo-50/30 transition">
+                                <td className="py-3 px-4 text-center text-slate-400 font-mono">{idx + 1}</td>
+                                {Object.values(row).map((val, i) => (
+                                  <td key={i} className="py-3 px-4">
+                                    {typeof val === 'number'
+                                      ? new Intl.NumberFormat('vi-VN').format(val)
+                                      : val === null ? '—' : String(val)}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </>
               ) : (
-                <div className="text-center py-8 text-slate-400 text-xs">Không có dữ liệu snapshot.</div>
+                <div className="text-center py-12 text-slate-400 text-xs">
+                  Không có dữ liệu snapshot nào được ghi lại.
+                </div>
               )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-200 flex items-center justify-between bg-slate-50/50">
+              <span className="text-xs text-slate-400">
+                Hiển thị kết quả snapshot mới nhất của báo cáo
+              </span>
+              <button
+                type="button"
+                onClick={() => setSnapshotData(null)}
+                className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold rounded-xl transition cursor-pointer"
+              >
+                Đóng
+              </button>
             </div>
           </div>
         </div>

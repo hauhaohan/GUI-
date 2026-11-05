@@ -47,6 +47,90 @@ let mockSessions = [
   },
 ];
 
+// Mock tin nhắn theo từng session (ChatMessageDto)
+let mockMessagesMap = {
+  1: [
+    {
+      id: 101,
+      chatSessionId: 1,
+      role: 'USER',
+      content: 'Liệt kê danh sách top thợ có doanh thu cao nhất trong tháng 08/2026 kèm số lượng đơn hoàn thành?',
+      sqlGenerated: null,
+      chartType: null,
+      createdAt: '2026-10-14T21:55:00',
+    },
+    {
+      id: 102,
+      chatSessionId: 1,
+      role: 'AI',
+      content: `### 📊 Kết quả phân tích thợ tháng 08/2026\nĐã cập nhật danh sách với điều kiện **doanh thu > 10.000.000đ** — còn lại **3 thợ** thỏa điều kiện:\n\n- 🥇 **Nguyễn Văn A**: 15.500.000 đ *(45 đơn dọn dẹp)*\n- 🥈 **Trần Thị B**: 12.000.000 đ *(30 đơn điện nước)*\n- 🥉 **Lê Văn C**: 10.000.000 đ *(25 đơn sửa chữa)*\n\n> 💡 *Dữ liệu đã được tính toán dựa trên các đơn COMPLETED.*`,
+      sqlGenerated: `SELECT t.full_name AS ten_tho, s.name AS dich_vu, COUNT(b.id) AS don_hoan_thanh, SUM(p.amount) AS doanh_thu\nFROM technicians t\nJOIN bookings b ON t.id = b.tech_id\nJOIN services s ON b.service_id = s.id\nJOIN payments p ON b.id = p.booking_id\nWHERE b.status = 'COMPLETED'\nGROUP BY t.id, t.full_name, s.name\nHAVING SUM(p.amount) > 10000000\nORDER BY doanh_thu DESC;`,
+      chartType: 'TABLE',
+      createdAt: '2026-10-14T22:00:00',
+    },
+  ],
+  2: [
+    {
+      id: 201,
+      chatSessionId: 2,
+      role: 'USER',
+      content: 'Phân tích tỷ lệ đơn hủy trong tháng 7/2026 theo từng loại dịch vụ?',
+      sqlGenerated: null,
+      chartType: null,
+      createdAt: '2026-10-13T14:25:00',
+    },
+    {
+      id: 202,
+      chatSessionId: 2,
+      role: 'AI',
+      content: `### ⚠️ Thống kê đơn hủy tháng 7/2026\nTỷ lệ hủy cao nhất ở dịch vụ **Sửa điện nước** với 18% tổng số đơn hủy.\n\n- **Sửa điện nước**: 24 đơn hủy (18.2%)\n- **Sửa máy giặt**: 15 đơn hủy (11.5%)\n- **Vệ sinh nhà**: 8 đơn hủy (4.1%)`,
+      sqlGenerated: `SELECT s.name AS dich_vu, COUNT(b.id) AS don_huy, ROUND(100.0 * COUNT(b.id) / SUM(COUNT(b.id)) OVER(), 2) AS ty_le_huy\nFROM bookings b\nJOIN services s ON b.service_id = s.id\nWHERE b.status = 'CANCELLED'\nGROUP BY s.name\nORDER BY don_huy DESC;`,
+      chartType: 'BAR_CHART',
+      createdAt: '2026-10-13T14:30:00',
+    },
+  ],
+  3: [
+    {
+      id: 301,
+      chatSessionId: 3,
+      role: 'USER',
+      content: 'Thống kê dịch vụ phổ biến và tỷ trọng doanh thu trong quý 3?',
+      sqlGenerated: null,
+      chartType: null,
+      createdAt: '2026-10-12T09:10:00',
+    },
+    {
+      id: 302,
+      chatSessionId: 3,
+      role: 'AI',
+      content: `### 📈 Dịch vụ phổ biến Quý 3\nDịch vụ **Dọn dẹp vệ sinh** chiếm **52%** tổng doanh thu trong quý, tiếp theo là **Sửa điện nước** (28%) và **Sơn sửa nhà** (20%).`,
+      sqlGenerated: `SELECT s.name AS dich_vu, SUM(p.amount) AS doanh_thu\nFROM services s\nJOIN bookings b ON s.id = b.service_id\nJOIN payments p ON b.id = p.booking_id\nWHERE b.status = 'COMPLETED'\nGROUP BY s.name\nORDER BY doanh_thu DESC;`,
+      chartType: 'PIE_CHART',
+      createdAt: '2026-10-12T09:15:00',
+    },
+  ],
+  4: [
+    {
+      id: 401,
+      chatSessionId: 4,
+      role: 'USER',
+      content: 'Đánh giá hiệu suất các thợ mới gia nhập vào tháng 9?',
+      sqlGenerated: null,
+      chartType: null,
+      createdAt: '2026-10-11T16:40:00',
+    },
+    {
+      id: 402,
+      chatSessionId: 4,
+      role: 'AI',
+      content: `### 👨‍🔧 Hiệu suất thợ mới tháng 9\nCó 12 thợ mới đạt tỷ lệ hoàn thành trên 90% với điểm đánh giá trung bình **4.8/5.0 sao**.`,
+      sqlGenerated: `SELECT t.full_name AS ten_tho, COUNT(b.id) AS don_nhan, SUM(CASE WHEN b.status = 'COMPLETED' THEN 1 ELSE 0 END) AS don_xong\nFROM technicians t\nJOIN bookings b ON t.id = b.tech_id\nWHERE t.created_at >= '2026-09-01'\nGROUP BY t.id, t.full_name;`,
+      chartType: 'TABLE',
+      createdAt: '2026-10-11T16:45:00',
+    },
+  ],
+};
+
 export const chatService = {
   /**
    * 2.1 Hỏi AI / Chat với Database — POST /api/admin/chat/ask
@@ -110,6 +194,29 @@ export const chatService = {
             lastMessageAt: new Date().toISOString(),
           });
         }
+
+        // Lưu tin nhắn mock
+        if (!mockMessagesMap[newSessionId]) {
+          mockMessagesMap[newSessionId] = [];
+        }
+        mockMessagesMap[newSessionId].push({
+          id: Date.now() - 500,
+          chatSessionId: newSessionId,
+          role: 'USER',
+          content: question.trim(),
+          sqlGenerated: null,
+          chartType: null,
+          createdAt: new Date().toISOString(),
+        });
+        mockMessagesMap[newSessionId].push({
+          id: Date.now(),
+          chatSessionId: newSessionId,
+          role: 'AI',
+          content: aiMessage,
+          sqlGenerated,
+          chartType: 'TABLE',
+          createdAt: new Date().toISOString(),
+        });
 
         return {
           sessionId: newSessionId,
@@ -432,12 +539,201 @@ export const chatService = {
     } catch (error) {
       if (error.isNetworkError && authStorage.isMockEnabled()) {
         mockSessions = mockSessions.filter((s) => s.id !== Number(id));
+        delete mockMessagesMap[Number(id)];
         return { message: 'Chat deleted' };
       }
       throw error;
     }
   },
+
+  /**
+   * 2.5 Lấy danh sách tin nhắn của 1 phiên — GET /api/admin/chat/{sessionId}/messages?page=1&size=50
+   * @param {number} sessionId - ID của phiên hội thoại
+   * @param {number} [page=1] - Trang hiện tại
+   * @param {number} [size=50] - Số lượng tin nhắn cần lấy
+   */
+  async getSessionMessages(sessionId, page = 1, size = 50) {
+    if (!sessionId) {
+      throw new Error('ID phiên hội thoại không hợp lệ.');
+    }
+
+    try {
+      const data = await apiRequest(`/api/admin/chat/${sessionId}/messages`, {
+        method: 'GET',
+        params: { page, size },
+      });
+      return data;
+    } catch (error) {
+      if (error.isNetworkError && authStorage.isMockEnabled()) {
+        console.warn(`Backend chưa chạy, đang trả về mock messages cho session #${sessionId}...`);
+        return _getMockSessionMessages(sessionId, page, size);
+      }
+      throw error;
+    }
+  },
+
+  /**
+   * 2.6 Lấy dữ liệu chi tiết của 1 tin nhắn cũ — GET /api/admin/chat/message/{messageId}
+   * @param {number} messageId - ID của tin nhắn AI cần lấy dữ liệu
+   */
+  async getMessageData(messageId) {
+    if (!messageId) {
+      throw new Error('ID tin nhắn không hợp lệ.');
+    }
+
+    try {
+      const data = await apiRequest(`/api/admin/chat/message/${messageId}`, {
+        method: 'GET',
+      });
+      return data;
+    } catch (error) {
+      if (error.isNetworkError && authStorage.isMockEnabled()) {
+        console.warn(`Backend chưa chạy, đang trả về mock message data cho message #${messageId}...`);
+        return _getMockMessageData(messageId);
+      }
+      throw error;
+    }
+  },
 };
+
+/**
+ * Lấy dữ liệu bảng mock cho 1 tin nhắn cũ (GET /api/admin/chat/message/{messageId})
+ */
+function _getMockMessageData(messageId) {
+  const mid = Number(messageId);
+
+  if (mid === 102 || mid === 1) {
+    const tableData = [
+      { id: 1, ten_tho: 'Nguyễn Văn A', dich_vu: 'Dọn dẹp', don_hoan_thanh: 45, doanh_thu: 15500000 },
+      { id: 2, ten_tho: 'Trần Thị B', dich_vu: 'Điện nước', don_hoan_thanh: 30, doanh_thu: 12000000 },
+      { id: 3, ten_tho: 'Lê Văn C', dich_vu: 'Sửa chữa', don_hoan_thanh: 25, doanh_thu: 10000000 },
+    ];
+    return {
+      messageId: mid,
+      tableData,
+      chartType: 'TABLE',
+      currentPage: 1,
+      totalPages: 1,
+      totalRecords: tableData.length,
+    };
+  }
+
+  if (mid === 202 || mid === 2) {
+    const tableData = [
+      { id: 1, dich_vu: 'Sửa điện nước', don_huy: 24, ty_le_huy: 18.2 },
+      { id: 2, dich_vu: 'Sửa máy giặt', don_huy: 15, ty_le_huy: 11.5 },
+      { id: 3, dich_vu: 'Vệ sinh nhà', don_huy: 8, ty_le_huy: 4.1 },
+      { id: 4, dich_vu: 'Bảo dưỡng điều hòa', don_huy: 5, ty_le_huy: 3.2 },
+    ];
+    return {
+      messageId: mid,
+      tableData,
+      chartType: 'BAR_CHART',
+      currentPage: 1,
+      totalPages: 1,
+      totalRecords: tableData.length,
+    };
+  }
+
+  if (mid === 302 || mid === 3) {
+    const tableData = [
+      { id: 1, dich_vu: 'Dọn dẹp vệ sinh', doanh_thu: 150000000, ty_trong: 52 },
+      { id: 2, dich_vu: 'Sửa điện nước', doanh_thu: 80000000, ty_trong: 28 },
+      { id: 3, dich_vu: 'Sơn sửa nhà', doanh_thu: 50000000, ty_trong: 20 },
+    ];
+    return {
+      messageId: mid,
+      tableData,
+      chartType: 'PIE_CHART',
+      currentPage: 1,
+      totalPages: 1,
+      totalRecords: tableData.length,
+    };
+  }
+
+  if (mid === 402 || mid === 4) {
+    const tableData = [
+      { id: 1, ten_tho: 'Phạm Văn Mới 1', don_nhan: 35, don_xong: 33, ty_le_hoan_thanh: '94.2%' },
+      { id: 2, ten_tho: 'Trần Văn Mới 2', don_nhan: 28, don_xong: 26, ty_le_hoan_thanh: '92.8%' },
+      { id: 3, ten_tho: 'Lê Thị Mới 3', don_nhan: 20, don_xong: 19, ty_le_hoan_thanh: '95.0%' },
+    ];
+    return {
+      messageId: mid,
+      tableData,
+      chartType: 'TABLE',
+      currentPage: 1,
+      totalPages: 1,
+      totalRecords: tableData.length,
+    };
+  }
+
+  const defaultTable = [
+    { id: 1, ten_tho: 'Nguyễn Văn A', dich_vu: 'Dọn dẹp vệ sinh', don_hoan_thanh: 45, doanh_thu: 15500000 },
+    { id: 2, ten_tho: 'Trần Thị B', dich_vu: 'Sửa điện nước', don_hoan_thanh: 30, doanh_thu: 12000000 },
+    { id: 3, ten_tho: 'Lê Văn C', dich_vu: 'Sửa chữa điện lạnh', don_hoan_thanh: 25, doanh_thu: 10000000 },
+    { id: 4, ten_tho: 'Phạm Minh D', dich_vu: 'Dọn dẹp văn phòng', don_hoan_thanh: 22, doanh_thu: 8500000 },
+    { id: 5, ten_tho: 'Hoàng Anh E', dich_vu: 'Vệ sinh máy lạnh', don_hoan_thanh: 18, doanh_thu: 7200000 },
+  ];
+
+  return {
+    messageId: mid,
+    tableData: defaultTable,
+    chartType: 'TABLE',
+    currentPage: 1,
+    totalPages: 1,
+    totalRecords: defaultTable.length,
+  };
+}
+
+/**
+ * Lấy danh sách tin nhắn mock theo sessionId
+ */
+function _getMockSessionMessages(sessionId, page = 1, size = 50) {
+  const sid = Number(sessionId);
+  let list = mockMessagesMap[sid];
+
+  if (!list) {
+    const s = mockSessions.find((x) => x.id === sid);
+    list = [
+      {
+        id: Date.now() - 1000,
+        chatSessionId: sid,
+        role: 'USER',
+        content: s?.title || 'Câu hỏi phân tích dữ liệu',
+        sqlGenerated: null,
+        chartType: null,
+        createdAt: s?.lastMessageAt || new Date().toISOString(),
+      },
+      {
+        id: Date.now(),
+        chatSessionId: sid,
+        role: 'AI',
+        content: s?.lastMessage || 'Kết quả phân tích từ trợ lý AI.',
+        sqlGenerated: `SELECT t.full_name AS ten_tho, s.name AS dich_vu, COUNT(b.id) AS don_hoan_thanh, SUM(p.amount) AS doanh_thu\nFROM technicians t\nJOIN bookings b ON t.id = b.tech_id\nJOIN services s ON b.service_id = s.id\nJOIN payments p ON b.id = p.booking_id\nWHERE b.status = 'COMPLETED'\nGROUP BY t.id, t.full_name, s.name\nORDER BY doanh_thu DESC LIMIT 5;`,
+        chartType: 'TABLE',
+        createdAt: s?.lastMessageAt || new Date().toISOString(),
+      },
+    ];
+    mockMessagesMap[sid] = list;
+  }
+
+  // Backend sắp xếp: OrderByCreatedAtDesc (tin nhắn mới nhất ở đầu)
+  const sortedDesc = [...list].sort(
+    (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+  );
+
+  const startIndex = (page - 1) * size;
+  const items = sortedDesc.slice(startIndex, startIndex + size);
+
+  return {
+    items,
+    currentPage: page,
+    pageSize: size,
+    totalElements: list.length,
+    totalPages: Math.ceil(list.length / size) || 1,
+    hasNext: page * size < list.length,
+  };
+}
 
 /**
  * Mock SSE stream fallback khi backend chưa chạy
@@ -475,6 +771,29 @@ async function _mockStreamFallback(question, sessionId, callbacks) {
     totalPages: 2,
     totalRecords: 12,
   };
+
+  // Lưu tin nhắn mock
+  if (!mockMessagesMap[newSessionId]) {
+    mockMessagesMap[newSessionId] = [];
+  }
+  mockMessagesMap[newSessionId].push({
+    id: Date.now() - 500,
+    chatSessionId: newSessionId,
+    role: 'USER',
+    content: question.trim(),
+    sqlGenerated: null,
+    chartType: null,
+    createdAt: new Date().toISOString(),
+  });
+  mockMessagesMap[newSessionId].push({
+    id: result.messageId,
+    chatSessionId: newSessionId,
+    role: 'AI',
+    content: result.aiMessage,
+    sqlGenerated: result.sqlQuery,
+    chartType: result.chartType,
+    createdAt: new Date().toISOString(),
+  });
 
   onResult?.(result);
   onComplete?.();

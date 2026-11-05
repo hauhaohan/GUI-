@@ -28,6 +28,10 @@ function autoDetectFields(data) {
   const sample = data[0];
   const keys = Object.keys(sample);
 
+  const isNumeric = (val) =>
+    typeof val === 'number' ||
+    (typeof val === 'string' && val.trim() !== '' && !isNaN(Number(val)));
+
   // Tìm cột label: ưu tiên tên có "name", "tho", "dich_vu", "title", hoặc cột string đầu tiên
   const labelField =
     keys.find((k) =>
@@ -37,33 +41,36 @@ function autoDetectFields(data) {
 
   // Tìm các cột số: loại bỏ id
   const numericFields = keys.filter(
-    (k) => typeof sample[k] === 'number' && k !== 'id'
+    (k) => isNumeric(sample[k]) && k.toLowerCase() !== 'id'
   );
 
-  // Cột số "chính": ưu tiên doanh_thu, amount, revenue, total
+  // Cột số "chính": ưu tiên doanh_thu, amount, revenue, total, count,...
+  const priorityTerms = ['doanh_thu', 'amount', 'revenue', 'total', 'price', 'don_hoan_thanh', 'so_luong', 'count', 'ty_le'];
   const primaryNumField =
-    numericFields.find((k) =>
-      k.includes('doanh_thu') || k.includes('amount') || k.includes('revenue') || k.includes('total') || k.includes('price')
-    ) || numericFields[0];
+    numericFields.find((k) => priorityTerms.some((term) => k.toLowerCase().includes(term))) ||
+    numericFields[0];
 
   return { labelField, numericFields, primaryNumField };
 }
 
 function formatNumber(val) {
   if (val === null || val === undefined) return '—';
-  if (typeof val !== 'number') return String(val);
-  if (Math.abs(val) >= 1_000_000) return (val / 1_000_000).toFixed(1) + 'M';
-  if (Math.abs(val) >= 1_000) return (val / 1_000).toFixed(1) + 'K';
-  return new Intl.NumberFormat('vi-VN').format(val);
+  const num = Number(val);
+  if (isNaN(num)) return String(val);
+  if (Math.abs(num) >= 1_000_000) return (num / 1_000_000).toFixed(1) + 'M';
+  if (Math.abs(num) >= 1_000) return (num / 1_000).toFixed(1) + 'K';
+  return new Intl.NumberFormat('vi-VN').format(num);
 }
 
 function formatFullNumber(val) {
   if (val === null || val === undefined) return '—';
-  if (typeof val !== 'number') return String(val);
-  return new Intl.NumberFormat('vi-VN').format(val);
+  const num = Number(val);
+  if (isNaN(num)) return String(val);
+  return new Intl.NumberFormat('vi-VN').format(num);
 }
 
 function formatHeader(key) {
+  if (!key) return '';
   return key
     .replace(/_/g, ' ')
     .replace(/([A-Z])/g, ' $1')
@@ -73,19 +80,20 @@ function formatHeader(key) {
 // ========================================================================
 // BAR CHART — Biểu đồ cột ngang với animation
 // ========================================================================
-function BarChartView({ data, labelField, primaryNumField }) {
+function BarChartView({ data, labelField, primaryNumField, compact = false }) {
+  const displayData = compact ? data.slice(0, 5) : data;
   const maxVal = useMemo(
-    () => Math.max(...data.map((r) => Number(r[primaryNumField]) || 0), 1),
-    [data, primaryNumField]
+    () => Math.max(...displayData.map((r) => Number(r[primaryNumField]) || 0), 1),
+    [displayData, primaryNumField]
   );
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">
-        <BarChart2 size={14} className="text-[#5B42F3]" />
+    <div className={compact ? "space-y-2" : "space-y-3"}>
+      <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+        <BarChart2 size={compact ? 12 : 14} className="text-[#5B42F3]" />
         <span>Biểu đồ cột — {formatHeader(primaryNumField)}</span>
       </div>
-      {data.map((row, idx) => {
+      {displayData.map((row, idx) => {
         const val = Number(row[primaryNumField]) || 0;
         const pct = Math.max(8, Math.round((val / maxVal) * 100));
         const label = labelField ? (row[labelField] || `#${idx + 1}`) : `#${idx + 1}`;
@@ -94,14 +102,14 @@ function BarChartView({ data, labelField, primaryNumField }) {
         return (
           <div key={idx} className="group">
             <div className="flex items-center justify-between mb-1">
-              <span className="text-xs font-semibold text-slate-800 truncate max-w-[60%]">
+              <span className={`font-semibold text-slate-800 truncate max-w-[65%] ${compact ? 'text-[11px]' : 'text-xs'}`}>
                 {label}
               </span>
-              <span className="text-xs font-bold" style={{ color }}>
+              <span className={`font-bold ${compact ? 'text-[11px]' : 'text-xs'}`} style={{ color }}>
                 {formatFullNumber(val)}
               </span>
             </div>
-            <div className="w-full bg-slate-100 h-7 rounded-lg overflow-hidden relative">
+            <div className={`w-full bg-slate-100 rounded-lg overflow-hidden relative ${compact ? 'h-5' : 'h-7'}`}>
               <div
                 className="h-full rounded-lg transition-all duration-700 ease-out flex items-center justify-end pr-2"
                 style={{
@@ -120,6 +128,11 @@ function BarChartView({ data, labelField, primaryNumField }) {
           </div>
         );
       })}
+      {compact && data.length > 5 && (
+        <div className="text-[10px] text-slate-400 font-medium pt-1">
+          + {data.length - 5} mục khác...
+        </div>
+      )}
     </div>
   );
 }
@@ -127,15 +140,16 @@ function BarChartView({ data, labelField, primaryNumField }) {
 // ========================================================================
 // PIE CHART — Biểu đồ tròn SVG với legend
 // ========================================================================
-function PieChartView({ data, labelField, primaryNumField }) {
+function PieChartView({ data, labelField, primaryNumField, compact = false }) {
+  const displayData = compact ? data.slice(0, 5) : data;
   const total = useMemo(
-    () => data.reduce((acc, r) => acc + (Number(r[primaryNumField]) || 0), 0),
-    [data, primaryNumField]
+    () => displayData.reduce((acc, r) => acc + (Number(r[primaryNumField]) || 0), 0),
+    [displayData, primaryNumField]
   );
 
   const slices = useMemo(() => {
     let currentAngle = 0;
-    return data.map((row, idx) => {
+    return displayData.map((row, idx) => {
       const val = Number(row[primaryNumField]) || 0;
       const pct = total > 0 ? (val / total) * 100 : 0;
       const angle = (pct / 100) * 360;
@@ -151,39 +165,38 @@ function PieChartView({ data, labelField, primaryNumField }) {
         color: PIE_COLORS[idx % PIE_COLORS.length],
       };
     });
-  }, [data, labelField, primaryNumField, total]);
+  }, [displayData, labelField, primaryNumField, total]);
 
-  // SVG pie chart
-  const radius = 80;
-  const cx = 100;
-  const cy = 100;
+  const svgSize = compact ? 150 : 200;
+  const radius = compact ? 60 : 80;
+  const cx = svgSize / 2;
+  const cy = svgSize / 2;
 
-  function polarToCartesian(cx, cy, r, angleDeg) {
+  function polarToCartesian(centerX, centerY, r, angleDeg) {
     const rad = ((angleDeg - 90) * Math.PI) / 180;
-    return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+    return { x: centerX + r * Math.cos(rad), y: centerY + r * Math.sin(rad) };
   }
 
-  function describeArc(cx, cy, r, startAngle, endAngle) {
-    const start = polarToCartesian(cx, cy, r, endAngle);
-    const end = polarToCartesian(cx, cy, r, startAngle);
+  function describeArc(centerX, centerY, r, startAngle, endAngle) {
+    const start = polarToCartesian(centerX, centerY, r, endAngle);
+    const end = polarToCartesian(centerX, centerY, r, startAngle);
     const largeArc = endAngle - startAngle > 180 ? 1 : 0;
-    return `M ${cx} ${cy} L ${start.x} ${start.y} A ${r} ${r} 0 ${largeArc} 0 ${end.x} ${end.y} Z`;
+    return `M ${centerX} ${centerY} L ${start.x} ${start.y} A ${r} ${r} 0 ${largeArc} 0 ${end.x} ${end.y} Z`;
   }
 
   return (
-    <div className="space-y-4">
+    <div className={compact ? "space-y-2" : "space-y-4"}>
       <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase tracking-wider">
-        <PieChart size={14} className="text-[#5B42F3]" />
+        <PieChart size={compact ? 12 : 14} className="text-[#5B42F3]" />
         <span>Biểu đồ tròn — {formatHeader(primaryNumField)}</span>
       </div>
 
-      <div className="flex items-center gap-8 flex-wrap">
+      <div className="flex items-center gap-6 flex-wrap">
         {/* SVG Pie */}
-        <div className="shrink-0">
-          <svg width="200" height="200" viewBox="0 0 200 200">
+        <div className="shrink-0 mx-auto sm:mx-0">
+          <svg width={svgSize} height={svgSize} viewBox={`0 0 ${svgSize} ${svgSize}`}>
             {slices.map((slice, idx) => {
               if (slice.angle < 0.5) return null;
-              // Nếu chỉ có 1 slice = 100%, vẽ full circle
               if (slice.angle >= 359.9) {
                 return (
                   <circle key={idx} cx={cx} cy={cy} r={radius} fill={slice.color} />
@@ -202,36 +215,40 @@ function PieChartView({ data, labelField, primaryNumField }) {
                 </path>
               );
             })}
-            {/* Center circle for donut effect */}
             <circle cx={cx} cy={cy} r={radius * 0.45} fill="white" />
-            <text x={cx} y={cy - 6} textAnchor="middle" className="text-xs font-bold fill-slate-800" fontSize="14">
+            <text x={cx} y={cy - 4} textAnchor="middle" className="font-bold fill-slate-800" fontSize={compact ? "11" : "13"}>
               {formatNumber(total)}
             </text>
-            <text x={cx} y={cy + 10} textAnchor="middle" className="fill-slate-400" fontSize="10">
+            <text x={cx} y={cy + (compact ? 9 : 11)} textAnchor="middle" className="fill-slate-400 font-medium" fontSize={compact ? "8" : "9"}>
               Tổng
             </text>
           </svg>
         </div>
 
         {/* Legend */}
-        <div className="flex-1 space-y-2 min-w-[180px]">
+        <div className="flex-1 space-y-1.5 min-w-[160px]">
           {slices.map((slice, idx) => (
-            <div key={idx} className="flex items-center gap-2.5 group">
+            <div key={idx} className="flex items-center gap-2 group">
               <span
-                className="w-3 h-3 rounded-sm shrink-0"
+                className="w-2.5 h-2.5 rounded-sm shrink-0"
                 style={{ background: slice.color }}
               />
-              <span className="text-xs text-slate-700 font-medium truncate flex-1">
+              <span className={`text-slate-700 font-medium truncate flex-1 ${compact ? 'text-[11px]' : 'text-xs'}`}>
                 {slice.label}
               </span>
-              <span className="text-xs font-bold text-slate-900">
+              <span className={`font-bold text-slate-900 ${compact ? 'text-[11px]' : 'text-xs'}`}>
                 {slice.pct.toFixed(1)}%
               </span>
-              <span className="text-[11px] text-slate-400 font-mono">
+              <span className="text-[10px] text-slate-400 font-mono">
                 {formatNumber(slice.value)}
               </span>
             </div>
           ))}
+          {compact && data.length > 5 && (
+            <div className="text-[10px] text-slate-400 pt-1">
+              + {data.length - 5} mục khác...
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -241,17 +258,13 @@ function PieChartView({ data, labelField, primaryNumField }) {
 // ========================================================================
 // METRIC — Hiển thị số liệu đơn lẻ nổi bật
 // ========================================================================
-function MetricView({ data, labelField, numericFields, primaryNumField }) {
-  // Metric thường là 1 row, 1-2 số
+function MetricView({ data, labelField, numericFields, primaryNumField, compact = false }) {
   const row = data[0] || {};
-
-  // Tính tổng nếu nhiều row
   const primaryTotal = data.reduce((acc, r) => acc + (Number(r[primaryNumField]) || 0), 0);
   const label = labelField && row[labelField]
     ? row[labelField]
     : formatHeader(primaryNumField);
 
-  // Tính các metric phụ
   const otherMetrics = numericFields
     .filter((f) => f !== primaryNumField)
     .map((f) => ({
@@ -260,23 +273,25 @@ function MetricView({ data, labelField, numericFields, primaryNumField }) {
     }));
 
   return (
-    <div className="space-y-4">
+    <div className={compact ? "space-y-3" : "space-y-4"}>
       <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase tracking-wider">
-        <Hash size={14} className="text-[#5B42F3]" />
+        <Hash size={compact ? 12 : 14} className="text-[#5B42F3]" />
         <span>Chỉ số tổng hợp</span>
       </div>
 
       {/* Main metric */}
-      <div className="bg-gradient-to-br from-[#5B42F3] to-indigo-600 p-8 rounded-2xl text-white text-center shadow-lg shadow-indigo-200">
-        <div className="text-sm font-medium text-white/70 uppercase tracking-wider mb-2">
+      <div className={`bg-gradient-to-br from-[#5B42F3] to-indigo-600 rounded-2xl text-white text-center shadow-md shadow-indigo-100 ${
+        compact ? 'p-5' : 'p-8'
+      }`}>
+        <div className={`font-medium text-white/70 uppercase tracking-wider mb-1 ${compact ? 'text-xs' : 'text-sm'}`}>
           {label}
         </div>
-        <div className="text-5xl font-extrabold tracking-tight">
+        <div className={`font-extrabold tracking-tight ${compact ? 'text-3xl' : 'text-5xl'}`}>
           {formatFullNumber(primaryTotal)}
         </div>
         {data.length > 1 && (
-          <div className="text-sm text-white/60 mt-2 flex items-center justify-center gap-1">
-            <TrendingUp size={14} />
+          <div className="text-xs text-white/70 mt-2 flex items-center justify-center gap-1">
+            <TrendingUp size={12} />
             Tổng hợp từ {data.length} bản ghi
           </div>
         )}
@@ -284,16 +299,16 @@ function MetricView({ data, labelField, numericFields, primaryNumField }) {
 
       {/* Secondary metrics */}
       {otherMetrics.length > 0 && (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-2.5">
           {otherMetrics.slice(0, 4).map((m, idx) => (
             <div
               key={idx}
-              className="bg-white border border-slate-200 p-4 rounded-xl text-center"
+              className={`bg-white border border-slate-200 rounded-xl text-center ${compact ? 'p-2.5' : 'p-4'}`}
             >
-              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5 truncate">
                 {m.label}
               </div>
-              <div className="text-lg font-extrabold text-slate-900">
+              <div className={`font-extrabold text-slate-900 ${compact ? 'text-sm' : 'text-lg'}`}>
                 {formatFullNumber(m.value)}
               </div>
             </div>
@@ -307,16 +322,28 @@ function MetricView({ data, labelField, numericFields, primaryNumField }) {
 // ========================================================================
 // MAIN COMPONENT — Tự động chọn loại biểu đồ dựa trên chartType
 // ========================================================================
-export default function DataChart({ chartType = 'TABLE', tableData = [] }) {
+export default function DataChart({
+  chartType = 'TABLE',
+  tableData = [],
+  compact = false,
+  showHeader = true,
+  className = '',
+}) {
   const { labelField, numericFields, primaryNumField } = useMemo(
     () => autoDetectFields(tableData),
     [tableData]
   );
 
+  const containerClasses = className
+    ? className
+    : compact
+    ? 'bg-white p-4 rounded-2xl space-y-2'
+    : 'bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-2';
+
   if (!tableData || tableData.length === 0) {
     return (
-      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-        <div className="py-8 text-center text-slate-400 text-xs">
+      <div className={containerClasses}>
+        <div className="py-6 text-center text-slate-400 text-xs">
           Không có dữ liệu để vẽ biểu đồ.
         </div>
       </div>
@@ -324,16 +351,15 @@ export default function DataChart({ chartType = 'TABLE', tableData = [] }) {
   }
 
   if (!primaryNumField) {
-    // Không tìm thấy cột số → fallback hiển thị text
     return (
-      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-        <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase tracking-wider mb-4">
+      <div className={containerClasses}>
+        <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">
           <Table size={14} className="text-[#5B42F3]" />
           <span>Dữ liệu trả về</span>
         </div>
-        <div className="space-y-2">
-          {tableData.slice(0, 10).map((row, idx) => (
-            <div key={idx} className="p-3 bg-slate-50 rounded-xl text-xs text-slate-700 font-mono">
+        <div className="space-y-1.5">
+          {tableData.slice(0, compact ? 4 : 10).map((row, idx) => (
+            <div key={idx} className="p-2.5 bg-slate-50 rounded-xl text-xs text-slate-700 font-mono truncate">
               {JSON.stringify(row)}
             </div>
           ))}
@@ -345,26 +371,38 @@ export default function DataChart({ chartType = 'TABLE', tableData = [] }) {
   const resolvedType = (chartType || 'TABLE').toUpperCase();
 
   return (
-    <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-2">
+    <div className={containerClasses}>
       {/* Chart type indicator badge */}
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-          Trực quan hóa dữ liệu AI
-        </span>
-        <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-indigo-50 text-[#5B42F3] border border-indigo-100">
-          {resolvedType === 'BAR_CHART' && '📊 Bar Chart'}
-          {resolvedType === 'PIE_CHART' && '🥧 Pie Chart'}
-          {resolvedType === 'METRIC' && '🔢 Metric'}
-          {resolvedType === 'TABLE' && '📋 Table View'}
-        </span>
-      </div>
+      {showHeader && (
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+            Trực quan hóa dữ liệu AI
+          </span>
+          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-indigo-50 text-[#5B42F3] border border-indigo-100">
+            {resolvedType === 'BAR_CHART' && '📊 Bar Chart'}
+            {resolvedType === 'PIE_CHART' && '🥧 Pie Chart'}
+            {resolvedType === 'METRIC' && '🔢 Metric'}
+            {resolvedType === 'TABLE' && '📊 Chart View'}
+          </span>
+        </div>
+      )}
 
       {resolvedType === 'BAR_CHART' && (
-        <BarChartView data={tableData} labelField={labelField} primaryNumField={primaryNumField} />
+        <BarChartView
+          data={tableData}
+          labelField={labelField}
+          primaryNumField={primaryNumField}
+          compact={compact}
+        />
       )}
 
       {resolvedType === 'PIE_CHART' && (
-        <PieChartView data={tableData} labelField={labelField} primaryNumField={primaryNumField} />
+        <PieChartView
+          data={tableData}
+          labelField={labelField}
+          primaryNumField={primaryNumField}
+          compact={compact}
+        />
       )}
 
       {resolvedType === 'METRIC' && (
@@ -373,11 +411,17 @@ export default function DataChart({ chartType = 'TABLE', tableData = [] }) {
           labelField={labelField}
           numericFields={numericFields}
           primaryNumField={primaryNumField}
+          compact={compact}
         />
       )}
 
       {resolvedType === 'TABLE' && (
-        <BarChartView data={tableData} labelField={labelField} primaryNumField={primaryNumField} />
+        <BarChartView
+          data={tableData}
+          labelField={labelField}
+          primaryNumField={primaryNumField}
+          compact={compact}
+        />
       )}
     </div>
   );
