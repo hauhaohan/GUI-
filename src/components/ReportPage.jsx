@@ -1,7 +1,7 @@
 // src/components/ReportPage.jsx
 // Trang quản lý Report & Scheduled Reports — /api/admin/reports
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   FileText, Plus, Clock, Play, Trash2, ChevronDown, ChevronRight,
   Calendar, ToggleLeft, ToggleRight, RefreshCw, Eye, X, Check,
@@ -269,6 +269,7 @@ function formatDateTime(isoStr) {
 export default function ReportPage({ showToast, prefillSql = null, prefillTitle = null, prefillChartType = null }) {
   const [reports, setReports] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [expandedReport, setExpandedReport] = useState(null);
   const [snapshotData, setSnapshotData] = useState(null);
   const [snapshotLoading, setSnapshotLoading] = useState(false);
@@ -276,6 +277,12 @@ export default function ReportPage({ showToast, prefillSql = null, prefillTitle 
   const [modalChartType, setModalChartType] = useState(null);
   const [runningReportId, setRunningReportId] = useState(null);
   const [searchKeyword, setSearchKeyword] = useState('');
+
+  // Ref cho showToast để tránh re-trigger useCallback/useEffect không cần thiết
+  const showToastRef = useRef(showToast);
+  useEffect(() => {
+    showToastRef.current = showToast;
+  }, [showToast]);
 
   // Create modal
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -300,36 +307,51 @@ export default function ReportPage({ showToast, prefillSql = null, prefillTitle 
     }
   }, [prefillSql, prefillTitle, prefillChartType]);
 
-  const fetchReports = useCallback(async () => {
-    setIsLoading(true);
+  // Tải danh sách reports mà KHÔNG unmount danh sách đang hiển thị (chống giật/nháy)
+  const fetchReports = useCallback(async (isSilent = false) => {
+    // Chỉ bật spinner toàn trang khi chưa có bản ghi nào
+    if (!isSilent) {
+      setIsLoading((prev) => (reports.length === 0 ? true : prev));
+      setIsRefreshing(true);
+    } else {
+      setIsRefreshing(true);
+    }
+
     try {
       const data = await reportService.getAllReports();
       setReports(data || []);
     } catch (err) {
-      showToast?.('error', err.message || 'Không thể tải danh sách reports.', 'Lỗi Reports');
+      showToastRef.current?.('error', err.message || 'Không thể tải danh sách reports.', 'Lỗi Reports');
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
     }
-  }, [showToast]);
+  }, [reports.length]);
 
-  useEffect(() => { fetchReports(); }, [fetchReports]);
+  // Chỉ fetch lần đầu khi mount (không đưa showToast vào dependency để tránh loop)
+  useEffect(() => {
+    fetchReports(false);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCreateReport = async () => {
     if (!createForm.title.trim()) {
-      showToast?.('error', 'Tiêu đề không được để trống.', 'Lỗi'); return;
+      showToastRef.current?.('error', 'Tiêu đề không được để trống.', 'Lỗi'); return;
     }
     if (!createForm.rawSql.trim()) {
-      showToast?.('error', 'Câu SQL không được để trống.', 'Lỗi'); return;
+      showToastRef.current?.('error', 'Câu SQL không được để trống.', 'Lỗi'); return;
     }
     setIsSaving(true);
     try {
-      await reportService.createReport(createForm);
-      showToast?.('success', `Đã lưu report "${createForm.title}"!`, 'Lưu Report');
+      const newReport = await reportService.createReport(createForm);
+      showToastRef.current?.('success', `Đã lưu report "${createForm.title}"!`, 'Lưu Report');
       setShowCreateModal(false);
       setCreateForm({ title: '', description: '', rawSql: '', chartType: 'TABLE' });
-      fetchReports();
+      if (newReport && newReport.id) {
+        setReports((prev) => [newReport, ...prev.filter((r) => r.id !== newReport.id)]);
+      }
+      fetchReports(true);
     } catch (err) {
-      showToast?.('error', err.message, 'Lỗi tạo Report');
+      showToastRef.current?.('error', err.message, 'Lỗi tạo Report');
     } finally {
       setIsSaving(false);
     }
@@ -337,12 +359,17 @@ export default function ReportPage({ showToast, prefillSql = null, prefillTitle 
 
   const handleDeleteReport = async (id) => {
     if (!window.confirm('Bạn có chắc muốn xóa report này?')) return;
+    // Optimistic delete
+    setReports((prev) => prev.filter((r) => r.id !== id));
+    if (expandedReport === id) setExpandedReport(null);
     try {
       await reportService.deleteReport(id);
-      showToast?.('success', 'Đã xóa report!', 'Xóa');
-      if (expandedReport === id) setExpandedReport(null);
-      fetchReports();
-    } catch (err) { showToast?.('error', err.message, 'Lỗi xóa'); }
+      showToastRef.current?.('success', 'Đã xóa report!', 'Xóa');
+      fetchReports(true);
+    } catch (err) {
+      showToastRef.current?.('error', err.message, 'Lỗi xóa');
+      fetchReports(true);
+    }
   };
 
   const handleSetSchedule = async () => {
@@ -350,33 +377,56 @@ export default function ReportPage({ showToast, prefillSql = null, prefillTitle 
     setIsScheduling(true);
     try {
       await reportService.setReportSchedule(scheduleModal, { cronExpression: cronValue, isActive: true });
-      showToast?.('success', 'Đã đặt lịch thành công!', 'Lịch Report');
+      showToastRef.current?.('success', 'Đã đặt lịch thành công!', 'Lịch Report');
       setScheduleModal(null);
-      fetchReports();
+      // Đồng bộ ngầm không giật màn hình
+      fetchReports(true);
     } catch (err) {
-      showToast?.('error', err.message, 'Lỗi đặt lịch');
+      showToastRef.current?.('error', err.message, 'Lỗi đặt lịch');
     } finally {
       setIsScheduling(false);
     }
   };
 
   const handleToggleSchedule = async (scheduleId, currentActive) => {
+    // 1. Optimistic Update: cập nhật ngay giao diện switch toggle không delay/nháy
+    setReports((prevReports) =>
+      prevReports.map((r) => ({
+        ...r,
+        schedules: (r.schedules || []).map((s) =>
+          s.id === scheduleId ? { ...s, isActive: !currentActive } : s
+        ),
+      }))
+    );
+
     try {
       await reportService.toggleSchedule(scheduleId, !currentActive);
-      showToast?.('success', !currentActive ? 'Đã kích hoạt lịch.' : 'Đã tạm dừng lịch.');
-      fetchReports();
-    } catch (err) { showToast?.('error', err.message, 'Lỗi'); }
+      showToastRef.current?.('success', !currentActive ? 'Đã kích hoạt lịch.' : 'Đã tạm dừng lịch.');
+      // Đồng bộ ngầm
+      fetchReports(true);
+    } catch (err) {
+      // Revert lại nếu có lỗi
+      setReports((prevReports) =>
+        prevReports.map((r) => ({
+          ...r,
+          schedules: (r.schedules || []).map((s) =>
+            s.id === scheduleId ? { ...s, isActive: currentActive } : s
+          ),
+        }))
+      );
+      showToastRef.current?.('error', err.message || 'Không thể thay đổi trạng thái lịch.', 'Lỗi');
+    }
   };
 
   const handleRunNow = async (reportId) => {
     setRunningReportId(reportId);
     try {
       await reportService.runReportNow(reportId);
-      showToast?.('success', 'Đã kích hoạt chạy ngay và làm mới kết quả!', 'Chạy Report');
+      showToastRef.current?.('success', 'Đã kích hoạt chạy ngay và làm mới kết quả!', 'Chạy Report');
       // Tự động tải và hiển thị ngay kết quả mới nhất kèm biểu đồ
       await handleViewSnapshot(reportId);
     } catch (err) {
-      showToast?.('error', err.message, 'Lỗi chạy report');
+      showToastRef.current?.('error', err.message, 'Lỗi chạy report');
     } finally {
       setRunningReportId(null);
     }
@@ -441,8 +491,13 @@ export default function ReportPage({ showToast, prefillSql = null, prefillTitle 
             </button>
           )}
         </div>
-        <button onClick={fetchReports} className="p-2.5 rounded-xl border border-slate-200 bg-white text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition">
-          <RefreshCw size={16} className={isLoading ? 'animate-spin text-[#5B42F3]' : ''} />
+        <button
+          onClick={() => fetchReports(false)}
+          disabled={isLoading || isRefreshing}
+          className="p-2.5 rounded-xl border border-slate-200 bg-white text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition cursor-pointer"
+          title="Làm mới danh sách reports"
+        >
+          <RefreshCw size={16} className={isLoading || isRefreshing ? 'animate-spin text-[#5B42F3]' : ''} />
         </button>
       </div>
 
@@ -465,16 +520,16 @@ export default function ReportPage({ showToast, prefillSql = null, prefillTitle 
         ))}
       </div>
 
-      {/* Loading */}
-      {isLoading && (
+      {/* Loading Skeleton chỉ hiển thị lần đầu khi chưa có dữ liệu */}
+      {isLoading && reports.length === 0 && (
         <div className="text-center py-12 bg-white rounded-2xl border border-slate-200">
           <div className="w-8 h-8 border-2 border-[#5B42F3] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-          <p className="text-xs text-slate-500">Đang tải...</p>
+          <p className="text-xs text-slate-500">Đang tải danh sách reports...</p>
         </div>
       )}
 
-      {/* Empty */}
-      {!isLoading && filteredReports.length === 0 && (
+      {/* Empty State khi chưa có bất kỳ report nào */}
+      {!isLoading && reports.length === 0 && (
         <div className="bg-white p-12 rounded-2xl border border-slate-200 text-center">
           <FileText size={40} className="mx-auto text-slate-300 mb-3" />
           <p className="text-sm text-slate-500 font-medium">Chưa có report nào</p>
@@ -482,9 +537,17 @@ export default function ReportPage({ showToast, prefillSql = null, prefillTitle 
         </div>
       )}
 
-      {/* Report list */}
-      <div className="space-y-3">
-        {!isLoading && filteredReports.map((report) => {
+      {/* Không tìm thấy kết quả tìm kiếm */}
+      {reports.length > 0 && filteredReports.length === 0 && (
+        <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center text-xs text-slate-400">
+          Không tìm thấy report nào phù hợp với từ khóa "{searchKeyword}".
+        </div>
+      )}
+
+      {/* Report list: Luôn hiển thị ổn định, không bị unmount khi cập nhật/đồng bộ ngầm */}
+      {filteredReports.length > 0 && (
+        <div className="space-y-3">
+          {filteredReports.map((report) => {
           const isExpanded = expandedReport === report.id;
           const activeSchedule = report.schedules?.find((s) => s.isActive);
           const hasSchedule = report.schedules?.length > 0;
@@ -628,6 +691,7 @@ export default function ReportPage({ showToast, prefillSql = null, prefillTitle 
           );
         })}
       </div>
+    )}
 
       {/* ── Create Modal ── */}
       {showCreateModal && (

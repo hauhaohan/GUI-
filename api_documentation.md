@@ -400,6 +400,161 @@ POST /api/admin/reports/{id}/run-now
 
 ---
 
+## 4. Prompt Management APIs — `/api/admin/prompts`
+
+Quản lý các mẫu Prompt AI động hỗ trợ Text-to-SQL, Fix lỗi truy vấn SQL và Phân tích kết quả kinh doanh.
+
+### 4.1 Quy tắc biến động bắt buộc (Required Placeholders)
+
+| PromptCode | Thẻ biến bắt buộc | Vai trò |
+|---|---|---|
+| `TEXT_TO_SQL_SYSTEM` | `{schema}` | System prompt cấu hình luật sinh SQL an toàn (chỉ SELECT) & schema PostgreSQL |
+| `FIX_SQL_USER` | `{badSql}`, `{errorMessage}` | Prompt nạp câu lệnh lỗi và thông điệp lỗi DB để AI sửa lại |
+| `DATA_ANALYZER_SYSTEM` | *(Không bắt buộc)* | System prompt thiết lập vai trò Business Intelligence Analyst |
+| `DATA_ANALYZER_USER` | `{question}`, `{data}` | User prompt nạp câu hỏi và kết quả bảng dữ liệu để AI phân tích |
+
+---
+
+### 4.2 Lấy danh sách danh mục PromptCode
+```
+GET /api/admin/prompts/promptCode
+```
+
+**Response `200 OK`:**
+```json
+{
+  "status": "success",
+  "message": "Danh sách mã PromptCode",
+  "data": [
+    "TEXT_TO_SQL_SYSTEM",
+    "FIX_SQL_USER",
+    "DATA_ANALYZER_SYSTEM",
+    "DATA_ANALYZER_USER"
+  ]
+}
+```
+
+---
+
+### 4.3 Lấy danh sách Prompt đang Active
+```
+GET /api/admin/prompts
+```
+
+**Response `200 OK`:**
+```json
+{
+  "status": "success",
+  "message": "Danh sách prompt đang hoạt động",
+  "data": [
+    {
+      "id": 1,
+      "promptCode": "TEXT_TO_SQL_SYSTEM",
+      "content": "You are an expert PostgreSQL DBA...\nSchema:\n{schema}",
+      "version": 2,
+      "isActive": true,
+      "createdAt": "2026-11-05T10:00:00+07:00",
+      "updatedAt": "2026-11-05T10:00:00+07:00"
+    }
+  ]
+}
+```
+
+---
+
+### 4.4 Lấy lịch sử tất cả phiên bản của một PromptCode
+```
+GET /api/admin/prompts/{promptCode}/history
+```
+
+**Path Parameters:**
+- `promptCode`: String (VD: `TEXT_TO_SQL_SYSTEM`, `FIX_SQL_USER`, `DATA_ANALYZER_SYSTEM`, `DATA_ANALYZER_USER`)
+
+**Response `200 OK`:**
+```json
+{
+  "status": "success",
+  "message": "Lịch sử phiên bản của TEXT_TO_SQL_SYSTEM",
+  "data": [
+    {
+      "id": 5,
+      "promptCode": "TEXT_TO_SQL_SYSTEM",
+      "content": "You are an expert PostgreSQL DBA...\n{schema}",
+      "version": 2,
+      "isActive": true,
+      "createdAt": "2026-11-05T10:00:00+07:00"
+    },
+    {
+      "id": 1,
+      "promptCode": "TEXT_TO_SQL_SYSTEM",
+      "content": "Bản cũ v1...\n{schema}",
+      "version": 1,
+      "isActive": false,
+      "createdAt": "2026-10-20T08:30:00+07:00"
+    }
+  ]
+}
+```
+
+---
+
+### 4.5 Tạo phiên bản Prompt mới
+```
+POST /api/admin/prompts
+```
+
+**Request Body:**
+```json
+{
+  "promptCode": "TEXT_TO_SQL_SYSTEM",
+  "content": "You are an expert PostgreSQL DBA...\nDatabase Schema:\n{schema}\nRules:\n1. Only SELECT..."
+}
+```
+
+> **Client Guard:** Frontend phải kiểm tra nội dung chứa đầy đủ các biến bắt buộc trước khi gửi request. Nếu thiếu, hiển thị thông báo lỗi và chặn gọi API.
+
+**Response `200 OK`:**
+```json
+{
+  "status": "success",
+  "message": "Đã tạo phiên bản prompt mới thành công",
+  "data": {
+    "id": 6,
+    "promptCode": "TEXT_TO_SQL_SYSTEM",
+    "content": "...",
+    "version": 3,
+    "isActive": true,
+    "createdAt": "2026-11-06T00:50:00+07:00"
+  }
+}
+```
+
+---
+
+### 4.6 Khôi phục (Rollback) phiên bản Prompt
+```
+POST /api/admin/prompts/{id}/rollback
+```
+
+**Path Parameters:**
+- `id`: Long (ID của bản ghi prompt cần khôi phục)
+
+**Response `200 OK`:**
+```json
+{
+  "status": "success",
+  "message": "Khôi phục phiên bản thành công",
+  "data": {
+    "id": 1,
+    "promptCode": "TEXT_TO_SQL_SYSTEM",
+    "version": 1,
+    "isActive": true
+  }
+}
+```
+
+---
+
 ## ❌ Error Responses
 
 | HTTP Status | Khi nào xảy ra |
@@ -436,3 +591,8 @@ POST /api/admin/reports/{id}/run-now
 | `GET` | `/api/admin/reports/{id}/latest-data` | ✅ | Lấy snapshot kết quả dữ liệu mới nhất của report |
 | `POST` | `/api/admin/reports/schedules` | ✅ | Đặt lịch chạy tự động cho report (cron expression) |
 | `PATCH` | `/api/admin/reports/schedules/{id}/toggle` | ✅ | Kích hoạt hoặc tạm dừng lịch chạy report |
+| `GET` | `/api/admin/prompts/promptCode` | ✅ | Lấy danh sách danh mục PromptCode (Enum) |
+| `GET` | `/api/admin/prompts` | ✅ | Lấy danh sách các Prompt đang active (`isActive = true`) |
+| `GET` | `/api/admin/prompts/{promptCode}/history` | ✅ | Lấy danh sách toàn bộ các phiên bản cũ/mới của một promptCode |
+| `POST` | `/api/admin/prompts` | ✅ | Tạo phiên bản Prompt mới (Client Guard biến bắt buộc) |
+| `POST` | `/api/admin/prompts/{id}/rollback` | ✅ | Kích hoạt lại phiên bản cũ có ID tương ứng (Rollback) |

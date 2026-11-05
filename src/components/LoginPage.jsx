@@ -4,19 +4,17 @@
 import React, { useState } from 'react';
 import {
   Database, Lock, Mail, Eye, EyeOff, Shield, ArrowRight,
-  Sparkles, CheckCircle2, AlertCircle, Server, Terminal,
-  Cpu, KeyRound, RefreshCw, Layers
+  Sparkles, CheckCircle2, AlertCircle, Terminal,
+  Cpu, KeyRound, RefreshCw, Layers, Calendar
 } from 'lucide-react';
 import { authService } from '../services/authService';
-import { authStorage } from '../services/apiClient';
 
 export default function LoginPage({ onLoginSuccess }) {
-  const [email, setEmail] = useState('admin@homeservice.vn');
-  const [password, setPassword] = useState('admin123');
+  const [email, setEmail] = useState(() => localStorage.getItem('remembered_admin_email') || '');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  const [mockMode, setMockMode] = useState(authStorage.isMockEnabled());
   const [rememberMe, setRememberMe] = useState(true);
 
   // Xử lý gửi form đăng nhập
@@ -26,7 +24,7 @@ export default function LoginPage({ onLoginSuccess }) {
 
     // Kiểm tra validation frontend trước khi gọi API
     if (!email.trim() || !password) {
-      setErrorMessage('Email và mật khẩu không được để trống (must not be blank).');
+      setErrorMessage('Vui lòng nhập đầy đủ email và mật khẩu.');
       return;
     }
 
@@ -36,31 +34,51 @@ export default function LoginPage({ onLoginSuccess }) {
       // Gọi API POST /api/auth/login
       const userData = await authService.login(email.trim(), password);
 
+      if (rememberMe) {
+        localStorage.setItem('remembered_admin_email', email.trim());
+      } else {
+        localStorage.removeItem('remembered_admin_email');
+      }
+
       if (userData && onLoginSuccess) {
         onLoginSuccess(userData);
       }
     } catch (err) {
       console.error('Lỗi đăng nhập:', err);
-      // Hiển thị lỗi từ backend (ví dụ: "must not be blank", "Bad credentials",...)
-      setErrorMessage(
-        err.message || 'Đăng nhập thất bại. Vui lòng kiểm tra lại email hoặc mật khẩu.'
-      );
+      const status = err?.status;
+      const msg = (err?.message || '').toLowerCase();
+
+      if (
+        status === 401 ||
+        status === 403 ||
+        msg.includes('401') ||
+        msg.includes('403') ||
+        msg.includes('bad credentials') ||
+        msg.includes('unauthorized') ||
+        msg.includes('forbidden') ||
+        msg.includes('mật khẩu') ||
+        msg.includes('tài khoản')
+      ) {
+        setErrorMessage('Tài khoản hoặc mật khẩu không chính xác. Vui lòng kiểm tra lại.');
+      } else if (
+        err?.isNetworkError ||
+        msg.includes('failed to fetch') ||
+        msg.includes('network') ||
+        msg.includes('không thể kết nối') ||
+        msg.includes('connection refused') ||
+        status === 502 ||
+        status === 503 ||
+        status === 504
+      ) {
+        setErrorMessage('Không thể kết nối đến máy chủ hoặc máy chủ không phản hồi.');
+      } else if (status === 500 || msg.includes('500')) {
+        setErrorMessage('Máy chủ đang gặp sự cố xử lý (HTTP 500). Vui lòng thử lại sau.');
+      } else {
+        setErrorMessage(err.message || 'Đăng nhập không thành công. Vui lòng kiểm tra lại thông tin.');
+      }
     } finally {
       setIsLoading(false);
     }
-  };
-
-  // Điền nhanh tài khoản demo
-  const handleQuickFill = () => {
-    setEmail('admin@homeservice.vn');
-    setPassword('admin123');
-    setErrorMessage('');
-  };
-
-  // Bật/tắt chế độ mô phỏng khi chưa bật backend
-  const handleToggleMock = (checked) => {
-    setMockMode(checked);
-    authStorage.setMockEnabled(checked);
   };
 
   return (
@@ -160,11 +178,11 @@ export default function LoginPage({ onLoginSuccess }) {
             </div>
             <div className="p-3.5 rounded-2xl bg-slate-900/60 border border-slate-800/80 backdrop-blur-sm space-y-1">
               <div className="text-xs font-bold text-white flex items-center gap-2">
-                <Shield size={14} className="text-indigo-400" />
-                Bảo mật JWT Admin
+                <Calendar size={14} className="text-amber-400" />
+                Đặt lịch Báo cáo Tự động
               </div>
               <p className="text-[11px] text-slate-400">
-                Bảo vệ tất cả các endpoint <code>/api/admin/**</code> bằng Bearer Token.
+                Tự động chạy truy vấn báo cáo theo chu kỳ (Cron), lưu snapshot kết quả và xem biểu đồ.
               </p>
             </div>
           </div>
@@ -197,10 +215,9 @@ export default function LoginPage({ onLoginSuccess }) {
 
             {/* Error Message Box */}
             {errorMessage && (
-              <div className="p-3.5 bg-rose-500/10 border border-rose-500/30 rounded-2xl text-xs text-rose-300 flex items-start gap-2.5 animate-fadeIn">
+              <div className="p-3.5 bg-rose-500/10 border border-rose-500/30 rounded-2xl text-xs text-rose-200 flex items-start gap-2.5 animate-fadeIn">
                 <AlertCircle size={16} className="shrink-0 mt-0.5 text-rose-400" />
                 <div className="flex-1 leading-relaxed">
-                  <span className="font-semibold text-rose-200">Lỗi xác thực: </span>
                   {errorMessage}
                 </div>
               </div>
@@ -230,18 +247,9 @@ export default function LoginPage({ onLoginSuccess }) {
 
               {/* Field 2: Password */}
               <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-slate-300 block">
-                    Mật khẩu <span className="text-rose-400">*</span>
-                  </label>
-                  <button
-                    type="button"
-                    onClick={handleQuickFill}
-                    className="text-[11px] text-indigo-400 hover:text-indigo-300 transition hover:underline"
-                  >
-                    Điền tài khoản mẫu
-                  </button>
-                </div>
+                <label className="text-xs font-semibold text-slate-300 block">
+                  Mật khẩu <span className="text-rose-400">*</span>
+                </label>
                 <div className="relative">
                   <Lock size={16} className="absolute left-3.5 top-3.5 text-slate-500" />
                   <input
@@ -256,15 +264,15 @@ export default function LoginPage({ onLoginSuccess }) {
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3.5 top-3.5 text-slate-500 hover:text-slate-300 transition"
+                    className="absolute right-3.5 top-3.5 text-slate-500 hover:text-slate-300 transition cursor-pointer"
                   >
                     {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                   </button>
                 </div>
               </div>
 
-              {/* Remember me & Server Options */}
-              <div className="flex items-center justify-between text-xs text-slate-400 pt-1">
+              {/* Remember me */}
+              <div className="flex items-center text-xs text-slate-400 pt-1">
                 <label className="flex items-center gap-2 cursor-pointer select-none">
                   <input
                     type="checkbox"
@@ -272,27 +280,8 @@ export default function LoginPage({ onLoginSuccess }) {
                     onChange={(e) => setRememberMe(e.target.checked)}
                     className="w-4 h-4 rounded bg-slate-900 border-slate-700 text-[#5B42F3] focus:ring-indigo-500"
                   />
-                  <span>Ghi nhớ phiên</span>
+                  <span>Ghi nhớ phiên đăng nhập</span>
                 </label>
-
-                <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
-                  <Server size={12} className={mockMode ? 'text-amber-400' : 'text-emerald-400'} />
-                  <span>{mockMode ? 'Chế độ Demo' : 'Live API: 8080'}</span>
-                </div>
-              </div>
-
-              {/* Offline Demo Mode Toggle Helper */}
-              <div className="p-3 bg-slate-900/60 rounded-xl border border-slate-800 text-[11px] text-slate-400 flex items-center justify-between">
-                <div>
-                  <div className="font-semibold text-slate-300">Dùng thử khi server offline</div>
-                  <div className="text-[10px] text-slate-500">Mô phỏng JWT token nếu backend chưa bật</div>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={mockMode}
-                  onChange={(e) => handleToggleMock(e.target.checked)}
-                  className="w-4 h-4 rounded text-[#5B42F3] bg-slate-800 border-slate-700 focus:ring-indigo-500 cursor-pointer"
-                />
               </div>
 
               {/* Submit Button */}
@@ -314,13 +303,6 @@ export default function LoginPage({ onLoginSuccess }) {
                 )}
               </button>
             </form>
-
-            {/* API Spec Footer Reference */}
-            <div className="pt-2 border-t border-slate-800/80 text-center">
-              <p className="text-[11px] text-slate-500">
-                Phản hồi thành công sẽ cấp JWT Token và chuyển hướng tới Query Studio.
-              </p>
-            </div>
           </div>
         </div>
 

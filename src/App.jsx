@@ -6,7 +6,7 @@ import {
   HelpCircle, Send, Code, FileSpreadsheet, FileText, X, Trash2,
   Edit2, Check, RefreshCw, LogIn, LogOut, Shield, Wifi, WifiOff,
   Copy, Layers, User, ChevronLeft, FileBarChart, Calendar, Timer, BookmarkPlus,
-  Eye, Repeat
+  Eye, Repeat, Terminal
 } from 'lucide-react';
 import { authService } from './services/authService';
 import { chatService } from './services/chatService';
@@ -17,6 +17,7 @@ import LoginModal from './components/LoginModal';
 import Toast from './components/Toast';
 import AiMarkdownMessage from './components/AiMarkdownMessage';
 import ReportPage from './components/ReportPage';
+import PromptManagementPage from './components/PromptManagementPage';
 import DataChart from './components/DataChart';
 import { exportToCsv, exportToExcel } from './utils/exportUtils';
 
@@ -69,7 +70,7 @@ export default function App() {
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
 
   // Navigation & Screen States
-  const [activeNav, setActiveNav] = useState('studio'); // 'dashboard' | 'studio' | 'sources' | 'reports' | 'settings'
+  const [activeNav, setActiveNav] = useState('studio'); // 'dashboard' | 'studio' | 'reports' | 'prompts' | 'sources' | 'settings'
   const [studioView, setStudioView] = useState('list'); // 'list' | 'detail'
   const [settingsTab, setSettingsTab] = useState('dictionary'); // 'dictionary' | 'sources' | 'connect'
   const [dataViewMode, setDataViewMode] = useState('table'); // 'table' | 'chart'
@@ -96,12 +97,12 @@ export default function App() {
 
   // Toast Notification State
   const [toast, setToast] = useState(null);
-  const showToast = (type, message, title = '') => {
+  const showToast = useCallback((type, message, title = '') => {
     setToast({ type, message, title });
     setTimeout(() => {
       setToast((prev) => (prev?.message === message ? null : prev));
     }, 4000);
-  };
+  }, []);
 
   // Sessions List State (GET /api/admin/chat)
   const [sessions, setSessions] = useState([]);
@@ -949,6 +950,7 @@ Tôi có thể hỗ trợ bạn:
             {renderNavItem('dashboard', <LayoutDashboard size={18} />, 'Dashboard', dashboardWidgets.length.toString())}
             {renderNavItem('studio', <MessageSquare size={18} />, 'Query Studio', sessions.length > 0 ? sessions.length.toString() : null)}
             {renderNavItem('reports', <FileBarChart size={18} />, 'Reports', scheduledReports.length > 0 ? scheduledReports.length.toString() : null)}
+            {renderNavItem('prompts', <Terminal size={18} />, 'Prompt Management')}
             {renderNavItem('sources', <Database size={18} />, 'Data Sources')}
             {renderNavItem('settings', <Settings size={18} />, 'Dictionary & Settings')}
           </div>
@@ -1001,6 +1003,7 @@ Tôi có thể hỗ trợ bạn:
               )}
               {activeNav === 'dashboard' && 'Dashboard'}
               {activeNav === 'reports' && 'Reports'}
+              {activeNav === 'prompts' && 'Admin Prompt Management'}
               {activeNav === 'sources' && 'Data Sources'}
               {activeNav === 'settings' && 'Dictionary & Settings'}
             </span>
@@ -2086,6 +2089,13 @@ Tôi có thể hỗ trợ bạn:
         )}
 
         {/* ========================================================= */}
+        {/* SCREEN: PROMPT MANAGEMENT (Admin Dynamic Prompts)         */}
+        {/* ========================================================= */}
+        {activeNav === 'prompts' && (
+          <PromptManagementPage onShowToast={showToast} />
+        )}
+
+        {/* ========================================================= */}
         {/* SCREEN B: DASHBOARD                                       */}
         {/* ========================================================= */}
         {activeNav === 'dashboard' && (
@@ -3023,6 +3033,15 @@ Tôi có thể hỗ trợ bạn:
                 }`}
               >
                 Kết nối DB
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveNav('prompts')}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-indigo-600 hover:bg-indigo-50 transition flex items-center gap-1.5 cursor-pointer"
+                title="Chuyển đến màn hình Quản lý Prompt AI"
+              >
+                <Terminal size={13} />
+                Prompt Management ↗
               </button>
             </div>
 

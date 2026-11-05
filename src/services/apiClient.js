@@ -118,13 +118,18 @@ export async function apiRequest(endpoint, options = {}) {
     try {
       json = await res.json();
     } catch {
-      throw new Error(`Phản hồi không hợp lệ từ máy chủ (HTTP ${res.status})`);
+      const err = new Error(`Phản hồi không hợp lệ từ máy chủ (HTTP ${res.status})`);
+      err.status = res.status;
+      throw err;
     }
 
     // ApiResponse<T>: { status: "success" | "error", message: string, data: T }
     if (!res.ok || json.status === 'error') {
       const errorMsg = json.message || `Lỗi máy chủ (HTTP ${res.status})`;
-      throw new Error(errorMsg);
+      const err = new Error(errorMsg);
+      err.status = res.status;
+      err.data = json;
+      throw err;
     }
 
     return json.data;
