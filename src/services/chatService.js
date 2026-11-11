@@ -547,12 +547,12 @@ export const chatService = {
   },
 
   /**
-   * 2.5 Lấy danh sách tin nhắn của 1 phiên — GET /api/admin/chat/{sessionId}/messages?page=1&size=50
+   * 2.5 Lấy danh sách tin nhắn của 1 phiên — GET /api/admin/chat/{sessionId}/messages?page=1&size=10
    * @param {number} sessionId - ID của phiên hội thoại
    * @param {number} [page=1] - Trang hiện tại
-   * @param {number} [size=50] - Số lượng tin nhắn cần lấy
+   * @param {number} [size=10] - Số lượng tin nhắn cần lấy
    */
-  async getSessionMessages(sessionId, page = 1, size = 50) {
+  async getSessionMessages(sessionId, page = 1, size = 10) {
     if (!sessionId) {
       throw new Error('ID phiên hội thoại không hợp lệ.');
     }
@@ -688,7 +688,7 @@ function _getMockMessageData(messageId) {
 /**
  * Lấy danh sách tin nhắn mock theo sessionId
  */
-function _getMockSessionMessages(sessionId, page = 1, size = 50) {
+function _getMockSessionMessages(sessionId, page = 1, size = 10) {
   const sid = Number(sessionId);
   let list = mockMessagesMap[sid];
 
@@ -718,9 +718,10 @@ function _getMockSessionMessages(sessionId, page = 1, size = 50) {
   }
 
   // Backend sắp xếp: OrderByCreatedAtDesc (tin nhắn mới nhất ở đầu)
-  const sortedDesc = [...list].sort(
-    (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
-  );
+  const sortedDesc = [...list].sort((a, b) => {
+    const diff = new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+    return diff !== 0 ? diff : (b.id || 0) - (a.id || 0);
+  });
 
   const startIndex = (page - 1) * size;
   const items = sortedDesc.slice(startIndex, startIndex + size);

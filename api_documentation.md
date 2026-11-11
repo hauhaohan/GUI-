@@ -555,6 +555,47 @@ POST /api/admin/prompts/{id}/rollback
 
 ---
 
+## 5. Admin Schema Explorer API — `/api/admin/schema` *(Yêu cầu JWT)*
+
+### 5.1 Lấy cấu trúc Schema Database (kèm bảng, cột, khóa ngoại & raw `{schema}`)
+```
+GET /api/admin/schema
+```
+
+**Query Parameters (Optional):**
+- `refresh`: `boolean` (`true` để làm mới cache schema từ `SchemaExtractorService`)
+
+**Response `200 OK`:**
+```json
+{
+  "status": "success",
+  "message": "Schema retrieved successfully",
+  "data": {
+    "databaseName": "homeservice_prod",
+    "extractedAt": "2026-11-11T20:30:00",
+    "rawSchema": "Table: bookings ...",
+    "tables": [
+      {
+        "tableName": "bookings",
+        "description": "Lưu đơn đặt lịch dịch vụ",
+        "rowCountEstimate": 14820,
+        "columns": [
+          { "name": "id", "type": "bigint", "primaryKey": true, "nullable": false, "description": "Mã đơn đặt lịch" },
+          { "name": "tech_id", "type": "bigint", "primaryKey": false, "nullable": true, "description": "ID thợ thực hiện" }
+        ],
+        "foreignKeys": [
+          { "column": "tech_id", "targetTable": "technicians", "targetColumn": "id" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+> 📝 **Ghi chú:** Frontend [`schemaService.js`](src/services/schemaService.js) cũng hỗ trợ tự động parse nếu backend trả về trực tiếp chuỗi text `{schema}` từ `SchemaExtractorService` (`data: "CREATE TABLE..."` hoặc `data: { schema: "..." }`).
+
+---
+
 ## ❌ Error Responses
 
 | HTTP Status | Khi nào xảy ra |
@@ -596,3 +637,4 @@ POST /api/admin/prompts/{id}/rollback
 | `GET` | `/api/admin/prompts/{promptCode}/history` | ✅ | Lấy danh sách toàn bộ các phiên bản cũ/mới của một promptCode |
 | `POST` | `/api/admin/prompts` | ✅ | Tạo phiên bản Prompt mới (Client Guard biến bắt buộc) |
 | `POST` | `/api/admin/prompts/{id}/rollback` | ✅ | Kích hoạt lại phiên bản cũ có ID tương ứng (Rollback) |
+| `GET` | `/api/admin/schema` | ✅ | Lấy danh sách bảng, cột, khóa ngoại và raw `{schema}` cho Schema Explorer |

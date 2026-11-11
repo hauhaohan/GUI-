@@ -1,12 +1,12 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import {
   LayoutDashboard, MessageSquare, Database, Settings, Search, Plus,
-  Pin, Clock, Sparkles, ChevronRight, ChevronDown, CheckCircle2,
+  Pin, Clock, Sparkles, ChevronRight, ChevronDown, ChevronUp, CheckCircle2,
   XCircle, Download, Table, BarChart2, ArrowLeft, Filter, Bell,
   HelpCircle, Send, Code, FileSpreadsheet, FileText, X, Trash2,
-  Edit2, Check, RefreshCw, LogIn, LogOut, Shield, Wifi, WifiOff,
+  Edit2, Check, RefreshCw, LogIn, LogOut, Shield, WifiOff,
   Copy, Layers, User, ChevronLeft, FileBarChart, Calendar, Timer, BookmarkPlus,
-  Eye, Repeat, Terminal
+  Eye, Repeat, Terminal, Network
 } from 'lucide-react';
 import { authService } from './services/authService';
 import { chatService } from './services/chatService';
@@ -18,8 +18,93 @@ import Toast from './components/Toast';
 import AiMarkdownMessage from './components/AiMarkdownMessage';
 import ReportPage from './components/ReportPage';
 import PromptManagementPage from './components/PromptManagementPage';
+import SchemaExplorerPage from './components/SchemaExplorerPage';
 import DataChart from './components/DataChart';
 import { exportToCsv, exportToExcel } from './utils/exportUtils';
+
+const CHAT_MESSAGE_PAGE_SIZE = 10;
+
+function parseChatDate(value) {
+  if (!value) return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  if (Array.isArray(value)) {
+    const [y, m = 1, d = 1, h = 0, min = 0, s = 0] = value;
+    const date = new Date(y, m - 1, d, h, min, s);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const normalized = /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}/.test(trimmed)
+      ? trimmed.replace(/\s+/, 'T')
+      : trimmed;
+    const date = new Date(normalized);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function getChatDateKey(dateInput) {
+  const date = parseChatDate(dateInput);
+  if (!date) return '';
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function formatChatDateBadge(dateInput) {
+  const date = parseChatDate(dateInput);
+  if (!date) return '';
+  const dateStr = date.toLocaleDateString('vi-VN', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+  const now = new Date();
+  const todayKey = getChatDateKey(now);
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  const yesterdayKey = getChatDateKey(yesterday);
+  const key = getChatDateKey(date);
+
+  if (key === todayKey) return `Hôm nay · ${dateStr}`;
+  if (key === yesterdayKey) return `Hôm qua · ${dateStr}`;
+  return dateStr;
+}
+
+function formatChatMessageTime(dateInput) {
+  const date = parseChatDate(dateInput);
+  if (!date) return '';
+  const timeStr = date.toLocaleTimeString('vi-VN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const dateStr = date.toLocaleDateString('vi-VN', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+  return `${timeStr} · ${dateStr}`;
+}
+
+function mapBackendChatMessage(m) {
+  const isUser = (m.role || '').toUpperCase() === 'USER';
+  const createdAt = m.createdAt || null;
+  return {
+    id: m.id,
+    role: isUser ? 'user' : 'assistant',
+    content: m.content,
+    sqlQuery: m.sqlGenerated,
+    chartType: m.chartType || 'TABLE',
+    createdAt,
+    timestamp: createdAt ? formatChatMessageTime(createdAt) : 'Gần đây',
+  };
+}
 
 const INITIAL_DICTIONARY = [
   { id: 1, term: 'Khách VIP', rule: 'total_fee > 10.000.000', desc: 'Khách hàng có tổng chi tiêu trên 10 triệu' },
@@ -120,6 +205,14 @@ export default function App() {
   // Active Session State (POST /api/admin/chat/ask, PATCH, DELETE)
   const [activeSession, setActiveSession] = useState(null);
   const [messages, setMessages] = useState([]);
+  const [messagesPagination, setMessagesPagination] = useState({
+    currentPage: 1,
+    pageSize: CHAT_MESSAGE_PAGE_SIZE,
+    totalElements: 0,
+    totalPages: 1,
+    hasNext: false,
+  });
+  const [isLoadingMoreMessages, setIsLoadingMoreMessages] = useState(false);
   const [currentTableData, setCurrentTableData] = useState([]);
   const [currentSqlQuery, setCurrentSqlQuery] = useState('');
   const [currentChartType, setCurrentChartType] = useState('TABLE');
@@ -179,6 +272,24 @@ export default function App() {
 
   const messagesEndRef = useRef(null);
   const chatTextareaRef = useRef(null);
+  const chatScrollContainerRef = useRef(null);
+  const scrollBehaviorRef = useRef('none'); // 'none' | 'bottom-instant' | 'bottom-smooth' | 'preserve-prepend'
+  const prevScrollMetricsRef = useRef({ scrollHeight: 0, scrollTop: 0 });
+  const lastScrollTopRef = useRef(0);
+  const oldestLoadedCreatedAtRef = useRef(null);
+  const isFetchingOlderRef = useRef(false);
+  const suppressScrollLoadRef = useRef(false);
+  const lastLoadMoreErrorAtRef = useRef(0);
+  const activeSessionIdRef = useRef(null);
+  const messagesRef = useRef([]);
+
+  useEffect(() => {
+    activeSessionIdRef.current = activeSession?.id || null;
+  }, [activeSession?.id]);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   // Tự động co giãn chiều cao của ô chat dựa trên độ dài nội dung prompt (tránh mất chữ)
   const adjustChatInputHeight = useCallback(() => {
@@ -193,14 +304,44 @@ export default function App() {
     adjustChatInputHeight();
   }, [chatInput, adjustChatInputHeight]);
 
-  // Scroll to bottom of chat
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
+  // Đồng bộ vị trí cuộn: giữ nguyên vị trí khi prepend tin nhắn cũ, chỉ cuộn xuống đáy khi mở phiên hoặc gửi tin mới
+  useLayoutEffect(() => {
+    const container = chatScrollContainerRef.current;
+    const behavior = scrollBehaviorRef.current;
 
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages, isAsking]);
+    if (behavior === 'preserve-prepend') {
+      if (container) {
+        const heightDiff = container.scrollHeight - prevScrollMetricsRef.current.scrollHeight;
+        container.scrollTop = prevScrollMetricsRef.current.scrollTop + Math.max(0, heightDiff);
+        lastScrollTopRef.current = container.scrollTop;
+      }
+      scrollBehaviorRef.current = 'none';
+      return;
+    }
+
+    if (isLoadingMessages) return;
+
+    if (behavior === 'bottom-instant') {
+      if (container) {
+        container.scrollTop = container.scrollHeight;
+        lastScrollTopRef.current = container.scrollTop;
+      }
+      scrollBehaviorRef.current = 'none';
+      requestAnimationFrame(() => {
+        if (chatScrollContainerRef.current) {
+          chatScrollContainerRef.current.scrollTop = chatScrollContainerRef.current.scrollHeight;
+          lastScrollTopRef.current = chatScrollContainerRef.current.scrollTop;
+        }
+        suppressScrollLoadRef.current = false;
+      });
+      return;
+    }
+
+    if (behavior === 'bottom-smooth') {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      scrollBehaviorRef.current = 'none';
+    }
+  }, [messages, isAsking, isLoadingMessages, isLoadingMoreMessages]);
 
   // Handle unauthorized event (401)
   useEffect(() => {
@@ -288,8 +429,20 @@ export default function App() {
   // Logout handler
   const handleLogout = () => {
     authService.logout();
+    activeSessionIdRef.current = null;
+    oldestLoadedCreatedAtRef.current = null;
+    isFetchingOlderRef.current = false;
     setCurrentUser(null);
     setActiveSession(null);
+    setMessages([]);
+    setIsLoadingMoreMessages(false);
+    setMessagesPagination({
+      currentPage: 1,
+      pageSize: CHAT_MESSAGE_PAGE_SIZE,
+      totalElements: 0,
+      totalPages: 1,
+      hasNext: false,
+    });
     showToast('info', 'Bạn đã đăng xuất khỏi hệ thống.', 'Đã đăng xuất');
   };
 
@@ -309,18 +462,34 @@ export default function App() {
 
   // Tạo phiên mới (New Session)
   const handleCreateNewSession = () => {
+    activeSessionIdRef.current = null;
+    oldestLoadedCreatedAtRef.current = null;
+    isFetchingOlderRef.current = false;
+    suppressScrollLoadRef.current = false;
+    scrollBehaviorRef.current = 'bottom-instant';
     setActiveSession(null);
     setActiveMessageId(null);
     setActiveQueryTitle(null);
     setHoveredPairKey(null);
     setExpandedSqlMessageIds({});
     setShowPanelSqlCode(false);
+    setIsLoadingMessages(false);
+    setIsLoadingMoreMessages(false);
+    setMessagesPagination({
+      currentPage: 1,
+      pageSize: CHAT_MESSAGE_PAGE_SIZE,
+      totalElements: 0,
+      totalPages: 1,
+      hasNext: false,
+    });
     setChatInput('');
     if (chatTextareaRef.current) {
       chatTextareaRef.current.style.height = '42px';
     }
+    const nowIso = new Date().toISOString();
     setMessages([
       {
+        id: 'welcome-new-chat',
         role: 'assistant',
         content: `### 👋 Xin chào Quản trị viên!
 Tôi là **Trợ lý AI Cơ sở Dữ liệu Home Services** (OpenAI GPT-4o-mini).
@@ -331,7 +500,8 @@ Tôi có thể hỗ trợ bạn:
 - ⚡ **Sinh mã SQL**: Tự động tạo và thực thi câu lệnh SQL trực tiếp trên cơ sở dữ liệu PostgreSQL.
 
 > *Hãy đặt câu hỏi trong ô chat bên dưới hoặc chọn các gợi ý mẫu để bắt đầu!*`,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        createdAt: nowIso,
+        timestamp: formatChatMessageTime(nowIso),
       },
     ]);
     setCurrentTableData([]);
@@ -339,15 +509,30 @@ Tôi có thể hỗ trợ bạn:
     setStudioView('detail');
   };
 
-  // Mở session có sẵn: gọi API lấy tin nhắn và hiển thị tin nhắn mới nhất
+  // Mở session có sẵn: gọi API lấy trang mới nhất (page 1) và hiển thị tin nhắn mới nhất
   const handleOpenSession = async (session) => {
     if (!session?.id) return;
+
+    const targetSessionId = session.id;
+    activeSessionIdRef.current = targetSessionId;
+    oldestLoadedCreatedAtRef.current = null;
+    isFetchingOlderRef.current = false;
+    suppressScrollLoadRef.current = true;
+    scrollBehaviorRef.current = 'bottom-instant';
 
     setActiveSession(session);
     setEditTitleValue(session.title || '');
     setStudioView('detail');
     setIsLoadingMessages(true);
+    setIsLoadingMoreMessages(false);
     setMessages([]);
+    setMessagesPagination({
+      currentPage: 1,
+      pageSize: CHAT_MESSAGE_PAGE_SIZE,
+      totalElements: 0,
+      totalPages: 1,
+      hasNext: false,
+    });
     setCurrentTableData([]);
     setCurrentSqlQuery('');
     setActiveMessageId(null);
@@ -357,32 +542,45 @@ Tôi có thể hỗ trợ bạn:
     setShowPanelSqlCode(false);
 
     try {
-      // 1. Gọi API GET /api/admin/chat/{sessionId}/messages
-      const res = await chatService.getSessionMessages(session.id, 1, 50);
-      const items = res?.items || [];
+      // 1. Gọi API GET /api/admin/chat/{sessionId}/messages?page=1&size=10
+      const res = await chatService.getSessionMessages(targetSessionId, 1, CHAT_MESSAGE_PAGE_SIZE);
+      if (activeSessionIdRef.current !== targetSessionId) return;
+
+      const items = res?.items || res?.content || [];
+      const totalElements = res?.totalElements ?? items.length;
+      const pageSize = res?.pageSize || CHAT_MESSAGE_PAGE_SIZE;
+      const currentPage = res?.currentPage || 1;
+      const totalPages = res?.totalPages || Math.ceil(totalElements / pageSize) || 1;
+      const hasNext = typeof res?.hasNext === 'boolean'
+        ? res.hasNext
+        : currentPage < totalPages;
+
+      setMessagesPagination({
+        currentPage,
+        pageSize,
+        totalElements,
+        totalPages,
+        hasNext,
+      });
 
       // Backend trả về items OrderByCreatedAtDesc (tin nhắn mới nhất ở items[0])
       // Đảo ngược mảng để render theo thứ tự thời gian tự nhiên (cũ ở trên, mới ở dưới)
-      const chronological = [...items].reverse().map((m) => {
-        const isUser = (m.role || '').toUpperCase() === 'USER';
-        return {
-          id: m.id,
-          role: isUser ? 'user' : 'assistant',
-          content: m.content,
-          sqlQuery: m.sqlGenerated,
-          chartType: m.chartType || 'TABLE',
-          timestamp: m.createdAt
-            ? new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-            : 'Gần đây',
-        };
-      });
+      const chronological = [...items].reverse().map(mapBackendChatMessage);
+
+      const validTimes = chronological
+        .map((m) => parseChatDate(m.createdAt)?.getTime())
+        .filter((t) => typeof t === 'number' && !Number.isNaN(t));
+      oldestLoadedCreatedAtRef.current = validTimes.length > 0 ? Math.min(...validTimes) : null;
 
       if (chronological.length === 0) {
+        const emptyTime = session.lastMessageAt || new Date().toISOString();
         setMessages([
           {
+            id: `empty-${targetSessionId}`,
             role: 'assistant',
             content: `### 💬 Phiên hội thoại: **${session.title}**\nChưa có tin nhắn nào trong phiên này. Hãy đặt câu hỏi bên dưới để bắt đầu!`,
-            timestamp: 'Vừa xong',
+            createdAt: emptyTime,
+            timestamp: session.lastMessageAt ? formatChatMessageTime(emptyTime) : 'Vừa xong',
           },
         ]);
       } else {
@@ -407,6 +605,7 @@ Tôi có thể hỗ trợ bạn:
             // Tải dữ liệu bảng cho tin nhắn mới nhất này
             try {
               const tableRes = await chatService.getNextPage(latestAiItem.id, 1, 10);
+              if (activeSessionIdRef.current !== targetSessionId) return;
               if (tableRes && tableRes.tableData) {
                 setCurrentTableData(tableRes.tableData);
                 setTablePagination({
@@ -424,32 +623,167 @@ Tôi có thể hỗ trợ bạn:
           }
         }
       }
-
-      // Cuộn xuống tin nhắn mới nhất
-      setTimeout(() => {
-        scrollToBottom();
-      }, 80);
     } catch (err) {
+      if (activeSessionIdRef.current !== targetSessionId) return;
       console.error('Lỗi lấy tin nhắn:', err);
       showToast('error', err.message || 'Không thể tải tin nhắn của phiên này.', 'Lỗi tải tin nhắn');
+      const fallbackDate = session.lastMessageAt || null;
       // Fallback hiển thị thông tin sẵn có từ session
       setMessages([
         {
+          id: `fallback-user-${targetSessionId}`,
           role: 'user',
           content: session.title,
-          timestamp: 'Trước đó',
+          createdAt: fallbackDate,
+          timestamp: fallbackDate ? formatChatMessageTime(fallbackDate) : 'Trước đó',
         },
         {
+          id: `fallback-ai-${targetSessionId}`,
           role: 'assistant',
           content: session.lastMessage || 'Không thể tải chi tiết tin nhắn.',
-          timestamp: 'Gần đây',
+          createdAt: fallbackDate,
+          timestamp: fallbackDate ? formatChatMessageTime(fallbackDate) : 'Gần đây',
         },
       ]);
     } finally {
-      setIsLoadingMessages(false);
-      setTimeout(() => {
-        scrollToBottom();
-      }, 150);
+      if (activeSessionIdRef.current === targetSessionId) {
+        setIsLoadingMessages(false);
+      }
+    }
+  };
+
+  // Tải thêm các tin nhắn cũ hơn khi người dùng cuộn lên trên (Pagination ngược)
+  const loadOlderMessages = async (isManual = false) => {
+    const targetSessionId = activeSessionIdRef.current;
+    if (
+      !targetSessionId ||
+      isFetchingOlderRef.current ||
+      isLoadingMoreMessages ||
+      isLoadingMessages ||
+      !messagesPagination.hasNext
+    ) {
+      return;
+    }
+
+    if (!isManual && Date.now() - lastLoadMoreErrorAtRef.current < 2000) {
+      return;
+    }
+
+    isFetchingOlderRef.current = true;
+    setIsLoadingMoreMessages(true);
+
+    try {
+      let nextPage = messagesPagination.currentPage + 1;
+      const pageSize = messagesPagination.pageSize || CHAT_MESSAGE_PAGE_SIZE;
+      const existingIds = new Set(
+        messagesRef.current.map((m) => m.id).filter(Boolean)
+      );
+      const oldestBoundaryMs = oldestLoadedCreatedAtRef.current;
+      let fetchedOlder = [];
+      let finalPageInfo = null;
+
+      // Vòng lặp tối đa 5 trang để bỏ qua các tin nhắn bị trùng/lệch offset nếu người dùng vừa gửi câu hỏi mới
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const res = await chatService.getSessionMessages(targetSessionId, nextPage, pageSize);
+        if (activeSessionIdRef.current !== targetSessionId) return;
+
+        const rawItems = res?.items || res?.content || [];
+        const reversed = [...rawItems].reverse().map(mapBackendChatMessage);
+
+        const totalElements = res?.totalElements ?? messagesPagination.totalElements;
+        const resPageSize = res?.pageSize || pageSize;
+        const currentPage = res?.currentPage || nextPage;
+        const totalPages = res?.totalPages || Math.ceil(totalElements / resPageSize) || 1;
+        const hasNext = typeof res?.hasNext === 'boolean'
+          ? res.hasNext
+          : currentPage < totalPages;
+
+        finalPageInfo = {
+          currentPage,
+          pageSize: resPageSize,
+          totalElements,
+          totalPages,
+          hasNext,
+        };
+
+        const uniqueChunk = reversed.filter((m) => {
+          if (m.id && existingIds.has(m.id)) return false;
+          if (oldestBoundaryMs !== null && m.createdAt) {
+            const msgMs = parseChatDate(m.createdAt)?.getTime();
+            if (msgMs && msgMs > oldestBoundaryMs) {
+              return false;
+            }
+          }
+          return true;
+        });
+
+        fetchedOlder = uniqueChunk;
+        if (fetchedOlder.length > 0 || !hasNext) {
+          break;
+        }
+        nextPage = currentPage + 1;
+      }
+
+      if (activeSessionIdRef.current !== targetSessionId) return;
+
+      if (fetchedOlder.length > 0) {
+        const validTimes = fetchedOlder
+          .map((m) => parseChatDate(m.createdAt)?.getTime())
+          .filter((t) => typeof t === 'number' && !Number.isNaN(t));
+        if (validTimes.length > 0) {
+          const chunkOldest = Math.min(...validTimes);
+          oldestLoadedCreatedAtRef.current = oldestLoadedCreatedAtRef.current !== null
+            ? Math.min(oldestLoadedCreatedAtRef.current, chunkOldest)
+            : chunkOldest;
+        }
+      }
+
+      const container = chatScrollContainerRef.current;
+      prevScrollMetricsRef.current = {
+        scrollHeight: container ? container.scrollHeight : 0,
+        scrollTop: container ? container.scrollTop : 0,
+      };
+      scrollBehaviorRef.current = 'preserve-prepend';
+
+      if (fetchedOlder.length > 0) {
+        setMessages((prev) => {
+          const prevIds = new Set(prev.map((m) => m.id).filter(Boolean));
+          const deduped = fetchedOlder.filter((m) => !m.id || !prevIds.has(m.id));
+          return deduped.length > 0 ? [...deduped, ...prev] : prev;
+        });
+      }
+
+      if (finalPageInfo) {
+        setMessagesPagination(finalPageInfo);
+      }
+    } catch (err) {
+      if (activeSessionIdRef.current !== targetSessionId) return;
+      console.error('Lỗi tải thêm tin nhắn cũ hơn:', err);
+      lastLoadMoreErrorAtRef.current = Date.now();
+      showToast('error', err.message || 'Không thể tải thêm tin nhắn cũ hơn.', 'Lỗi phân trang tin nhắn');
+    } finally {
+      isFetchingOlderRef.current = false;
+      setIsLoadingMoreMessages(false);
+    }
+  };
+
+  // Tự động kích hoạt pagination khi lướt lên gần đầu khung chat
+  const handleChatScroll = (e) => {
+    const el = e.currentTarget;
+    const currentTop = el.scrollTop;
+    const isScrollingUp = currentTop < lastScrollTopRef.current;
+    lastScrollTopRef.current = currentTop;
+
+    if (suppressScrollLoadRef.current) return;
+    if (
+      isScrollingUp &&
+      currentTop <= 80 &&
+      messagesPagination.hasNext &&
+      !isFetchingOlderRef.current &&
+      !isLoadingMoreMessages &&
+      !isLoadingMessages
+    ) {
+      loadOlderMessages(false);
     }
   };
 
@@ -573,13 +907,16 @@ Tôi có thể hỗ trợ bạn:
       return;
     }
 
+    const userNowIso = new Date().toISOString();
     const userMessage = {
       id: Date.now() - 100,
       role: 'user',
       content: questionText.trim(),
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      createdAt: userNowIso,
+      timestamp: formatChatMessageTime(userNowIso),
     };
 
+    scrollBehaviorRef.current = 'bottom-smooth';
     setMessages((prev) => [...prev, userMessage]);
     setChatInput('');
     if (chatTextareaRef.current) {
@@ -600,6 +937,7 @@ Tôi có thể hỗ trợ bạn:
     const processResult = (responseData) => {
       if (!responseData) return;
 
+      const aiCreatedAt = responseData.createdAt || new Date().toISOString();
       const assistantMsg = {
         id: responseData.messageId || Date.now(),
         role: 'assistant',
@@ -607,9 +945,11 @@ Tôi có thể hỗ trợ bạn:
         sqlQuery: responseData.sqlQuery,
         tableData: responseData.tableData,
         chartType: responseData.chartType || 'TABLE',
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        createdAt: aiCreatedAt,
+        timestamp: formatChatMessageTime(aiCreatedAt),
       };
 
+      scrollBehaviorRef.current = 'bottom-smooth';
       setMessages((prev) => [...prev, assistantMsg]);
       setActiveMessageId(responseData.messageId || null);
       setActiveQueryTitle(null);
@@ -645,6 +985,7 @@ Tôi có thể hỗ trợ bạn:
           dataSource: 'homeservice_prod',
           lastMessageAt: new Date().toISOString(),
         };
+        activeSessionIdRef.current = responseData.sessionId;
         setActiveSession(newSessionObj);
         setEditTitleValue(newSessionObj.title);
       }
@@ -951,6 +1292,7 @@ Tôi có thể hỗ trợ bạn:
             {renderNavItem('studio', <MessageSquare size={18} />, 'Query Studio', sessions.length > 0 ? sessions.length.toString() : null)}
             {renderNavItem('reports', <FileBarChart size={18} />, 'Reports', scheduledReports.length > 0 ? scheduledReports.length.toString() : null)}
             {renderNavItem('prompts', <Terminal size={18} />, 'Prompt Management')}
+            {renderNavItem('schema', <Network size={18} />, 'Schema Explorer')}
             {renderNavItem('sources', <Database size={18} />, 'Data Sources')}
             {renderNavItem('settings', <Settings size={18} />, 'Dictionary & Settings')}
           </div>
@@ -1004,32 +1346,20 @@ Tôi có thể hỗ trợ bạn:
               {activeNav === 'dashboard' && 'Dashboard'}
               {activeNav === 'reports' && 'Reports'}
               {activeNav === 'prompts' && 'Admin Prompt Management'}
+              {activeNav === 'schema' && 'Schema Explorer'}
               {activeNav === 'sources' && 'Data Sources'}
               {activeNav === 'settings' && 'Dictionary & Settings'}
             </span>
           </div>
 
           <div className="flex items-center gap-3">
-            {/* API Mode Indicator */}
-            <div
-              className={`px-2.5 py-1 rounded-full text-[11px] font-semibold flex items-center gap-1.5 border ${
-                authStorage.isMockEnabled()
-                  ? 'bg-amber-50 text-amber-700 border-amber-200'
-                  : 'bg-emerald-50 text-emerald-700 border-emerald-200'
-              }`}
-            >
-              {authStorage.isMockEnabled() ? (
-                <>
-                  <WifiOff size={12} className="text-amber-600" />
-                  <span>Demo Mode (Mock API)</span>
-                </>
-              ) : (
-                <>
-                  <Wifi size={12} className="text-emerald-600" />
-                  <span>Live API (http://localhost:8080)</span>
-                </>
-              )}
-            </div>
+            {/* Demo Mode Indicator (chỉ hiển thị khi đang bật Mock API) */}
+            {authStorage.isMockEnabled() && (
+              <div className="px-2.5 py-1 rounded-full text-[11px] font-semibold flex items-center gap-1.5 border bg-amber-50 text-amber-700 border-amber-200">
+                <WifiOff size={12} className="text-amber-600" />
+                <span>Demo Mode (Mock API)</span>
+              </div>
+            )}
 
             <button
               onClick={() => {
@@ -1399,14 +1729,29 @@ Tôi có thể hỗ trợ bạn:
                     </span>
                   </div>
 
-                  <div className="text-[11px] text-slate-400 flex items-center justify-between">
+                  <div className="text-[11px] text-slate-400 flex items-center justify-between gap-2">
                     <span>GPT-4o-mini · homeservice_prod</span>
-                    {activeSession?.id && <span>ID: #{activeSession.id}</span>}
+                    <div className="flex items-center gap-2">
+                      {activeSession?.id && <span>ID: #{activeSession.id}</span>}
+                      <button
+                        type="button"
+                        onClick={() => setActiveNav('schema')}
+                        title="Mở Schema Explorer để xem bảng & cột trước khi hỏi AI"
+                        className="px-2 py-0.5 rounded-md bg-indigo-50 hover:bg-indigo-100 text-[#5B42F3] font-semibold flex items-center gap-1 transition cursor-pointer"
+                      >
+                        <Network size={11} />
+                        <span>Xem Schema</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
 
                 {/* Messages Container */}
-                <div className="flex-1 overflow-y-auto p-4">
+                <div
+                  ref={chatScrollContainerRef}
+                  onScroll={handleChatScroll}
+                  className="flex-1 overflow-y-auto p-4"
+                >
                   {isLoadingMessages ? (
                     <div className="py-16 px-4 flex flex-col items-center justify-center text-center space-y-3">
                       <div className="w-8 h-8 border-3 border-[#5B42F3] border-t-transparent rounded-full animate-spin"></div>
@@ -1419,6 +1764,40 @@ Tôi có thể hỗ trợ bạn:
                     </div>
                   ) : (
                     <>
+                      {messagesPagination.hasNext && (
+                        <div className="flex justify-center mb-3">
+                          <button
+                            type="button"
+                            onClick={() => loadOlderMessages(true)}
+                            disabled={isLoadingMoreMessages}
+                            className="px-3.5 py-1.5 rounded-full bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-[#5B42F3] border border-slate-200 hover:border-indigo-200 text-[11px] font-medium flex items-center gap-1.5 shadow-xs transition cursor-pointer disabled:opacity-60"
+                          >
+                            {isLoadingMoreMessages ? (
+                              <>
+                                <RefreshCw size={12} className="animate-spin text-[#5B42F3]" />
+                                <span>Đang tải tin nhắn cũ hơn...</span>
+                              </>
+                            ) : (
+                              <>
+                                <ChevronUp size={13} />
+                                <span>
+                                  Tải tin nhắn cũ hơn
+                                  {messagesPagination.totalElements > messages.length
+                                    ? ` (${messages.length}/${messagesPagination.totalElements})`
+                                    : ''}
+                                </span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      )}
+
+                      {!messagesPagination.hasNext && messagesPagination.currentPage > 1 && messages.length > 0 && (
+                        <div className="text-center text-[10px] text-slate-400 mb-3">
+                          Đã hiển thị toàn bộ lịch sử hội thoại ({messages.length} tin nhắn)
+                        </div>
+                      )}
+
                       {messages.map((msg, idx) => {
                         const isUser = msg.role === 'user';
                         const correspondingAiMsg = isUser
@@ -1454,15 +1833,15 @@ Tôi có thể hỗ trợ bạn:
 
                         const prevMsg = idx > 0 ? messages[idx - 1] : null;
                         const isAiFollowsUser = !isUser && prevMsg?.role === 'user';
-                        const showTimestamp = !isAiFollowsUser && (
-                          idx === 0 ||
-                          isUser ||
-                          (msg.timestamp && msg.timestamp !== prevMsg?.timestamp)
-                        );
+                        const msgDateKey = getChatDateKey(msg.createdAt);
+                        const prevDateKey = prevMsg ? getChatDateKey(prevMsg.createdAt) : '';
+                        const showDateDivider = Boolean(msgDateKey && (idx === 0 || msgDateKey !== prevDateKey));
+                        const showUserTimestamp = isUser;
+                        const fullDateTooltip = parseChatDate(msg.createdAt)?.toLocaleString('vi-VN') || undefined;
 
                         return (
                           <div
-                            key={idx}
+                            key={msg.id ? `${msg.role}-${msg.id}` : `idx-${idx}`}
                             className={
                               isAiFollowsUser
                                 ? 'mt-2.5'
@@ -1471,8 +1850,22 @@ Tôi có thể hỗ trợ bạn:
                                 : 'mt-5'
                             }
                           >
-                            {showTimestamp && (
-                              <div className="text-center text-[10px] text-slate-400 font-mono mb-2">
+                            {showDateDivider && (
+                              <div className={`flex items-center gap-3 ${idx === 0 ? 'mb-3' : 'my-4'}`}>
+                                <div className="flex-1 h-px bg-slate-200/80" />
+                                <span className="px-3 py-1 rounded-full bg-slate-100 border border-slate-200 text-[10px] font-semibold text-slate-500 flex items-center gap-1.5 shadow-xs">
+                                  <Calendar size={11} className="text-slate-400" />
+                                  {formatChatDateBadge(msg.createdAt)}
+                                </span>
+                                <div className="flex-1 h-px bg-slate-200/80" />
+                              </div>
+                            )}
+
+                            {showUserTimestamp && (
+                              <div
+                                title={fullDateTooltip}
+                                className="text-center text-[10px] text-slate-400 font-mono mb-2"
+                              >
                                 {msg.timestamp || 'Bây giờ'}
                               </div>
                             )}
@@ -1558,11 +1951,16 @@ Tôi có thể hỗ trợ bạn:
                                 >
                                   {/* Header card AI: Tiêu đề + Nút Xem dữ liệu khi hover */}
                                   <div className="flex items-center justify-between pb-1.5 border-b border-slate-200/60 gap-2">
-                                    <div className="flex items-center gap-1.5">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
                                       <Sparkles size={12} className={isHoveredPair ? "text-[#5B42F3]" : "text-slate-400"} />
                                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Trợ lý AI</span>
                                       {msg.timestamp && (
-                                        <span className="text-[10px] text-slate-400 font-mono ml-1">· {msg.timestamp}</span>
+                                        <span
+                                          title={fullDateTooltip}
+                                          className="text-[10px] text-slate-400 font-mono ml-1"
+                                        >
+                                          · {msg.timestamp}
+                                        </span>
                                       )}
                                     </div>
 
@@ -2093,6 +2491,27 @@ Tôi có thể hỗ trợ bạn:
         {/* ========================================================= */}
         {activeNav === 'prompts' && (
           <PromptManagementPage onShowToast={showToast} />
+        )}
+
+        {/* ========================================================= */}
+        {/* SCREEN: SCHEMA EXPLORER (Database Schema & ERD)           */}
+        {/* ========================================================= */}
+        {activeNav === 'schema' && (
+          <SchemaExplorerPage
+            showToast={showToast}
+            onAskAboutTable={(table) => {
+              if (!activeSession) {
+                handleCreateNewSession();
+              } else {
+                setStudioView('detail');
+              }
+              setActiveNav('studio');
+              setChatInput(`Thống kê tổng quan dữ liệu từ bảng ${table.tableName}`);
+              setTimeout(() => {
+                chatTextareaRef.current?.focus();
+              }, 80);
+            }}
+          />
         )}
 
         {/* ========================================================= */}
@@ -2948,8 +3367,20 @@ Tôi có thể hỗ trợ bạn:
                 </div>
                 <div className="text-xs text-slate-500">☰ 42 bảng (orders, technicians, services, payments...)</div>
                 <div className="grid grid-cols-2 gap-3 pt-2">
-                  <button className="py-2 bg-indigo-50 text-[#5B42F3] rounded-xl text-xs font-semibold hover:bg-indigo-100 transition">Xem schema</button>
-                  <button className="py-2 bg-slate-50 border border-slate-200 text-slate-700 rounded-xl text-xs font-semibold hover:bg-slate-100 transition">Cài đặt</button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveNav('schema')}
+                    className="py-2 bg-indigo-50 text-[#5B42F3] rounded-xl text-xs font-semibold hover:bg-indigo-100 transition cursor-pointer"
+                  >
+                    Xem schema
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveNav('settings')}
+                    className="py-2 bg-slate-50 border border-slate-200 text-slate-700 rounded-xl text-xs font-semibold hover:bg-slate-100 transition cursor-pointer"
+                  >
+                    Cài đặt
+                  </button>
                 </div>
               </div>
 
@@ -2966,8 +3397,20 @@ Tôi có thể hỗ trợ bạn:
                 </div>
                 <div className="text-xs text-slate-500">☰ 18 bảng</div>
                 <div className="grid grid-cols-2 gap-3 pt-2">
-                  <button className="py-2 bg-indigo-50 text-[#5B42F3] rounded-xl text-xs font-semibold hover:bg-indigo-100 transition">Xem schema</button>
-                  <button className="py-2 bg-slate-50 border border-slate-200 text-slate-700 rounded-xl text-xs font-semibold hover:bg-slate-100 transition">Cài đặt</button>
+                  <button
+                    type="button"
+                    onClick={() => showToast('info', 'Hiện tại Schema Explorer đang kết nối nguồn dữ liệu chính homeservice_prod.', 'Nguồn dữ liệu')}
+                    className="py-2 bg-indigo-50 text-[#5B42F3] rounded-xl text-xs font-semibold hover:bg-indigo-100 transition cursor-pointer"
+                  >
+                    Xem schema
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveNav('settings')}
+                    className="py-2 bg-slate-50 border border-slate-200 text-slate-700 rounded-xl text-xs font-semibold hover:bg-slate-100 transition cursor-pointer"
+                  >
+                    Cài đặt
+                  </button>
                 </div>
               </div>
 
@@ -2984,8 +3427,20 @@ Tôi có thể hỗ trợ bạn:
                 </div>
                 <div className="text-xs text-slate-500">☰ 31 bảng</div>
                 <div className="grid grid-cols-2 gap-3 pt-2">
-                  <button className="py-2 bg-indigo-50 text-[#5B42F3] rounded-xl text-xs font-semibold hover:bg-indigo-100 transition">Xem schema</button>
-                  <button className="py-2 bg-slate-50 border border-slate-200 text-slate-700 rounded-xl text-xs font-semibold hover:bg-slate-100 transition">Cài đặt</button>
+                  <button
+                    type="button"
+                    onClick={() => showToast('warning', 'Nguồn legacy_mysql đang ngắt kết nối.', 'Không thể xem schema')}
+                    className="py-2 bg-indigo-50 text-[#5B42F3] rounded-xl text-xs font-semibold hover:bg-indigo-100 transition cursor-pointer"
+                  >
+                    Xem schema
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveNav('settings')}
+                    className="py-2 bg-slate-50 border border-slate-200 text-slate-700 rounded-xl text-xs font-semibold hover:bg-slate-100 transition cursor-pointer"
+                  >
+                    Cài đặt
+                  </button>
                 </div>
               </div>
 
